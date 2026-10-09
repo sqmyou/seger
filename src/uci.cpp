@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "eval.h"
+#include "perft.h"
 #include "types.h"
 
 namespace seger {
@@ -111,12 +112,27 @@ void uciLoop() {
             out.flush();
         } else if (t[0] == "ucinewgame") {
             pos.setStartpos();
+            search.clearTT();
+        } else if (t[0] == "setoption") {
+            // setoption name Hash value 64
+            for (size_t i = 1; i + 1 < t.size(); ++i) {
+                if (t[i] == "name" && t[i + 1] == "Hash" && i + 3 < t.size() &&
+                    t[i + 2] == "value") {
+                    int mb = std::atoi(t[i + 3].c_str());
+                    if (mb >= 1) {
+                        search.tt().resize((size_t)mb);
+                        search.clearTT();
+                    }
+                }
+            }
         } else if (t[0] == "position") {
             applyPositionCommand(pos, t);
         } else if (t[0] == "go") {
             // Parse go arguments directly here so side-specific clock values
             // (wtime/btime) are applied correctly.
             SearchLimits lim;
+            bool perftOnly = false;
+            int perftDepth = 1;
             for (size_t i = 1; i < t.size(); ++i) {
                 const std::string& tok = t[i];
                 auto nextInt = [&](int def) -> int {
@@ -129,7 +145,17 @@ void uciLoop() {
                 else if (tok == "winc") { int v = nextInt(0); if (pos.sideToMove() == WHITE) lim.increment = v; }
                 else if (tok == "binc") { int v = nextInt(0); if (pos.sideToMove() == BLACK) lim.increment = v; }
                 else if (tok == "movestogo") lim.movestogo = nextInt(0);
+                else if (tok == "nodes") lim.nodes = (uint64_t)std::strtoull(t[++i].c_str(), nullptr, 10);
                 else if (tok == "infinite") lim.infinite = true;
+                else if (tok == "perft") { perftOnly = true; perftDepth = nextInt(1); }
+            }
+
+            if (perftOnly) {
+                Position p = pos;
+                uint64_t n = perft(p, perftDepth);
+                out << "nodes " << n << "\n";
+                out.flush();
+                continue;
             }
 
             search.setInfoCallback(out);

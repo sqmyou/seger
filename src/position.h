@@ -47,7 +47,19 @@ public:
     bool isInCheck(Color c) const;
 
     uint64_t colorBB(Color c) const { return byColor_[c]; }
+    uint64_t pieceBB(PieceType pt) const { return byType_[pt]; }
     uint64_t occupiedBB() const { return occupied_; }
+
+    // True when the given side still owns a knight, bishop, rook or queen.
+    bool hasNonPawnMaterial(Color c) const {
+        const uint64_t nonPawn = byType_[KNIGHT] | byType_[BISHOP] |
+                                 byType_[ROOK] | byType_[QUEEN];
+        return (nonPawn & byColor_[c]) != 0;
+    }
+
+    // True when the current position repeats an earlier one on the game /
+    // search path (a "twofold" repetition, scored as a draw).
+    bool isRepetition() const;
 
     // --- Move making -------------------------------------------------------
     // Applies a move to the position; pushes undo information. The caller is
@@ -56,6 +68,10 @@ public:
     void doMove(const Move& m);
     void undoMove(const Move& m);
 
+    // Null move: passes the turn without moving a piece (null-move pruning).
+    void makeNullMove();
+    void undoNullMove();
+
     // --- Move generation ---------------------------------------------------
     // Generates all pseudo-legal moves for the side to move. When
     // `onlyCaptures` is set, only captures (and promotions) are generated,
@@ -63,10 +79,11 @@ public:
     void generateMoves(std::vector<Move>& moves, bool onlyCaptures = false) const;
 
     // Generates fully legal moves.
-    void generateLegalMoves(std::vector<Move>& moves) const;
+    void generateLegalMoves(std::vector<Move>& moves);
 
-    // Returns true if the move is legal in this position.
-    bool isLegal(const Move& m) const;
+    // Returns true if the move is legal (leaves the moving side's king out of
+    // check). Uses make/unmake internally.
+    bool isLegalMove(const Move& m);
 
     // --- Output ------------------------------------------------------------
     void print() const;
@@ -85,9 +102,15 @@ private:
 
     // Bitboards tracking all occupied squares (for quick movegen scans). We
     // keep one per color for efficient "does this square hold an enemy piece"
-    // checks in pawn/king move generation.
+    // checks in pawn/king move generation, plus one per piece type for the
+    // evaluation's material test.
     uint64_t byColor_[COLOR_NB];
+    uint64_t byType_[PIECE_TYPE_NB];
     uint64_t occupied_;
+
+    // Zobrist keys of positions visited along the current game path, for
+    // repetition detection. Position 0 is the key at setFen()/setStartpos().
+    std::vector<uint64_t> keyHistory_;
 
     void putPiece(Piece p, int sq);
     void removePiece(int sq);

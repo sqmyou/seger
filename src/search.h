@@ -1,12 +1,13 @@
 #pragma once
 
-#include <chrono>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <ostream>
 #include <vector>
 
 #include "position.h"
+#include "tt.h"
 
 namespace seger {
 
@@ -29,10 +30,11 @@ struct SearchLimits {
     int timeLeft = 0;          // remaining time on the clock
     int increment = 0;         // per-move increment
     int movestogo = 0;         // moves until the next time control (0 = sudden death)
+    uint64_t nodes = 0;        // stop after this many nodes (0 = no node limit)
     bool infinite = false;
 
     bool hasTimeControl() const {
-        return movetime > 0 || timeLeft > 0 || infinite;
+        return movetime > 0 || timeLeft > 0 || infinite || nodes > 0;
     }
 };
 
@@ -49,23 +51,35 @@ public:
     // Requests that an in-progress search stop as soon as possible.
     void stop() { stopRequested_.store(true); }
 
+    TranspositionTable& tt() { return tt_; }
+    uint64_t lastNodes() const { return nodes_; }
+    void setTTEnabled(bool on) { ttEnabled_ = on; }
+    void clearTT() { tt_.clear(); }
+
 private:
     Position& pos_;
     std::ostream* out_ = nullptr;
 
     std::chrono::steady_clock::time_point start_;
     int64_t hardDeadlineMs_ = 0;
+    uint64_t nodeLimit_ = 0;
     bool stopped_ = false;
     mutable std::atomic<bool> stopRequested_{false};
 
     uint64_t nodes_ = 0;
-    // Move history keyed by position for simple repetition detection.
-    std::vector<uint64_t> history_;
 
-    int search(bool pvNode, int depth, int alpha, int beta, int ply);
+    TranspositionTable tt_;
+    bool ttEnabled_ = true;
+
+    // Move-ordering heuristics.
+    Move killers_[MAX_PLY][2];
+    int history_[PIECE_NB][BOARD_SIZE];
+
+    int search(int depth, int alpha, int beta, int ply, bool canNull);
     int quiescence(int alpha, int beta, int ply);
 
     bool timeUp();
+    void scoreMoves(std::vector<Move>& moves, const Move& ttMove, int ply);
 };
 
 }  // namespace seger

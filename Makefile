@@ -23,9 +23,9 @@ ENGINE := $(BUILD_DIR)/seger
 TEST_COMMON_SRCS := $(filter-out $(SRC_DIR)/main.cpp,$(ENGINE_SRCS))
 TEST_COMMON_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(TEST_COMMON_SRCS))
 
-TEST_BINS := $(BUILD_DIR)/perft_test $(BUILD_DIR)/position_test
+TEST_BINS := $(BUILD_DIR)/perft_test $(BUILD_DIR)/position_test $(BUILD_DIR)/search_test
 
-.PHONY: all test divide clean
+.PHONY: all test divide bench clean
 
 all: $(ENGINE)
 
@@ -44,6 +44,9 @@ $(BUILD_DIR)/perft_test: $(TEST_DIR)/perft_test.cpp $(TEST_COMMON_OBJS) | $(BUIL
 $(BUILD_DIR)/position_test: $(TEST_DIR)/position_test.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
 
+$(BUILD_DIR)/search_test: $(TEST_DIR)/search_test.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+
 # Perft-divide helper: ./build/perft_divide "<fen>" <depth>
 $(BUILD_DIR)/perft_divide: $(TEST_DIR)/perft_divide.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
@@ -53,8 +56,14 @@ test: $(TEST_BINS)
 	@$(BUILD_DIR)/position_test
 	@echo "== perft_test =="
 	@$(BUILD_DIR)/perft_test
+	@echo "== search_test =="
+	@$(BUILD_DIR)/search_test
 
 divide: $(BUILD_DIR)/perft_divide
+
+# Fixed-depth benchmark, useful for quick regression checks.
+bench: $(ENGINE)
+	@printf 'position startpos\ngo depth 9\nquit\n' | $(ENGINE) | tail -1
 
 clean:
 	rm -rf $(BUILD_DIR)

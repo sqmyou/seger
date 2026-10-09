@@ -46,6 +46,7 @@ Position::Position() : side_(WHITE), castling_(NO_CASTLING), ep_(SQ_NONE),
                        fifty_(0), fullmove_(1), key_(0), occupied_(0) {
     board_.fill(NO_PIECE);
     byColor_[WHITE] = byColor_[BLACK] = 0;
+    for (auto& b : byType_) b = 0;
     kingSq_[WHITE] = kingSq_[BLACK] = SQ_NONE;
 }
 
@@ -54,7 +55,9 @@ void Position::putPiece(Piece p, int sq) {
     if (p == NO_PIECE) return;
     uint64_t bit = bitOf(sq);
     byColor_[colorOf(p)] |= bit;
+    byType_[typeOf(p)] |= bit;
     occupied_ |= bit;
+    key_ ^= zobrist::psq[p][sq];
     if (typeOf(p) == KING) kingSq_[colorOf(p)] = sq;
 }
 
@@ -63,7 +66,9 @@ void Position::removePiece(int sq) {
     if (p == NO_PIECE) return;
     uint64_t bit = bitOf(sq);
     byColor_[colorOf(p)] &= ~bit;
+    byType_[typeOf(p)] &= ~bit;
     occupied_ &= ~bit;
+    key_ ^= zobrist::psq[p][sq];
     board_[sq] = NO_PIECE;
 }
 
@@ -74,18 +79,10 @@ void Position::movePiece(int from, int to) {
     putPiece(p, to);
 }
 
-static uint64_t computeKey(const std::array<Piece, BOARD_SIZE>& board,
-                           Color side, int castling, int ep) {
-    uint64_t k = 0;
-    for (int sq = 0; sq < BOARD_SIZE; ++sq) {
-        Piece p = board[sq];
-        if (p != NO_PIECE) k ^= zobrist::psq[p][sq];
-    }
-    if (side == BLACK) k ^= zobrist::sideToMove;
-    k ^= zobrist::castling[castling];
-    if (ep != SQ_NONE) k ^= zobrist::enPassant[ep];
-    return k;
-}
+// Piece keys are maintained incrementally: putPiece/removePiece XOR the
+// (piece, square) key in and out as pieces appear and disappear, so make/unmake
+// never rescans the board. Side/castling/en-passant keys are applied by the
+// callers (setFen, doMove, undoMove, null move).
 
 void Position::setStartpos() {
     setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -94,13 +91,16 @@ void Position::setStartpos() {
 bool Position::setFen(const std::string& fen) {
     board_.fill(NO_PIECE);
     byColor_[WHITE] = byColor_[BLACK] = 0;
+    for (auto& b : byType_) b = 0;
     occupied_ = 0;
+    key_ = 0;
     kingSq_[WHITE] = kingSq_[BLACK] = SQ_NONE;
     castling_ = NO_CASTLING;
     ep_ = SQ_NONE;
     fifty_ = 0;
     fullmove_ = 1;
     history_.clear();
+    keyHistory_.clear();
 
     std::istringstream ss(fen);
     std::string boardField, sideField, castleField, epField;
@@ -153,7 +153,12 @@ bool Position::setFen(const std::string& fen) {
         if (sq != SQ_NONE) ep_ = sq;
     }
 
-    key_ = computeKey(board_, side_, castling_, ep_);
+    // Pieces were loaded via putPiece, which accumulated their XOR keys.
+    if (side_ == BLACK) key_ ^= zobrist::sideToMove;
+    key_ ^= zobrist::castling[castling_];
+    if (ep_ != SQ_NONE) key_ ^= zobrist::enPassant[ep_];
+
+    keyHistory_.push_back(key_);
     return true;
 }
 
@@ -429,6 +434,7 @@ void Position::doMove(const Move& m) {
     st.epSquare = ep_;
     st.fiftyMove = fifty_;
     st.captured = NO_PIECE;
+    st.key = key_;
 
     const Color us = side_;
     const Color them = ~us;
@@ -469,7 +475,6 @@ void Position::doMove(const Move& m) {
         else if (sq == makeSquare(7, 7)) castling_ &= ~BLACK_OO;
     };
     if (typeOf(moved) == ROOK) clearRook(m.to);
-    if (typeOf(moved) == KING) { /* handled above */ }
     if (typeOf(board_[m.from]) == ROOK) clearRook(m.from);
     if (st.captured != NO_PIECE && typeOf(st.captured) == ROOK) {
         // Captured rook square: for en passant not possible; else it's m.to.
@@ -495,16 +500,24 @@ void Position::doMove(const Move& m) {
 
     if (us == BLACK) ++fullmove_;
 
+    // Incremental Zobrist: swap out the old side/castling/ep terms, swap in the
+    // new ones. Piece keys were already handled by movePiece.
+    key_ ^= zobrist::sideToMove;
+    key_ ^= zobrist::castling[st.castlingRights];
+    key_ ^= zobrist::castling[castling_];
+    if (st.epSquare != SQ_NONE) key_ ^= zobrist::enPassant[st.epSquare];
+    if (ep_ != SQ_NONE) key_ ^= zobrist::enPassant[ep_];
+
     side_ = them;
-    key_ = computeKey(board_, side_, castling_, ep_);
-    st.key = key_;
     history_.push_back(st);
+    keyHistory_.push_back(key_);
 }
 
 void Position::undoMove(const Move& m) {
     if (history_.empty()) return;
     StateInfo st = history_.back();
     history_.pop_back();
+    if (!keyHistory_.empty()) keyHistory_.pop_back();
 
     const Color us = ~side_;  // side that made the move
     side_ = us;
@@ -537,22 +550,66 @@ void Position::undoMove(const Move& m) {
     ep_ = st.epSquare;
     fifty_ = st.fiftyMove;
     if (us == BLACK) --fullmove_;
-    key_ = computeKey(board_, side_, castling_, ep_);
+    key_ = st.key;
 }
 
-bool Position::isLegal(const Move& m) const {
-    // A non-const make/unmake on a copy is the simplest correct filter.
-    Position copy = *this;
-    copy.doMove(m);
-    return !copy.isInCheck(side_);
+void Position::makeNullMove() {
+    StateInfo st;
+    st.castlingRights = castling_;
+    st.epSquare = ep_;
+    st.fiftyMove = fifty_;
+    st.captured = NO_PIECE;
+    st.key = key_;
+
+    key_ ^= zobrist::sideToMove;
+    if (ep_ != SQ_NONE) {
+        key_ ^= zobrist::enPassant[ep_];
+        ep_ = SQ_NONE;
+    }
+    fifty_ = st.fiftyMove + 1;
+    side_ = ~side_;
+
+    history_.push_back(st);
+    keyHistory_.push_back(key_);
 }
 
-void Position::generateLegalMoves(std::vector<Move>& moves) const {
+void Position::undoNullMove() {
+    if (history_.empty()) return;
+    StateInfo st = history_.back();
+    history_.pop_back();
+    if (!keyHistory_.empty()) keyHistory_.pop_back();
+
+    side_ = ~side_;
+    castling_ = st.castlingRights;
+    ep_ = st.epSquare;
+    fifty_ = st.fiftyMove;
+    key_ = st.key;
+}
+
+bool Position::isRepetition() const {
+    // Scan the path (at most to the last irreversible move) for an identical
+    // key supplied by an even number of half-moves away.
+    int end = fifty_;
+    if (end > (int)keyHistory_.size() - 1) end = (int)keyHistory_.size() - 1;
+    for (int i = 2; i <= end; i += 2)
+        if (keyHistory_[keyHistory_.size() - 1 - i] == key_) return true;
+    return false;
+}
+
+bool Position::isLegalMove(const Move& m) {
+    const Color us = side_;
+    doMove(m);
+    bool ok = !isInCheck(us);
+    undoMove(m);
+    return ok;
+}
+
+void Position::generateLegalMoves(std::vector<Move>& moves) {
     std::vector<Move> pseudo;
     pseudo.reserve(64);
     generateMoves(pseudo, false);
     for (const Move& m : pseudo)
-        if (isLegal(m)) moves.push_back(m);
+        if (isLegalMove(m)) moves.push_back(m);
 }
 
 void Position::print() const {
