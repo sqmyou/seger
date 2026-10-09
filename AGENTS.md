@@ -41,6 +41,14 @@ interval is wide because the gap is large; the lower bound is still above +200.
 Re-run the same command against a `build/seger` from commit `ee816e7` to
 reproduce it.
 
+Absolute strength via `tools/vs_stockfish.py` (Stockfish 19 strength-limited with
+`UCI_LimitStrength`/`UCI_Elo`, 100 ms/move, one SF thread, 40 games per anchor,
+colours alternated): Seger scored 0.675 vs SF-Elo 1900, 0.613 vs 2000 and 0.512
+vs 2100. A pooled fit puts Seger at roughly **2075 Elo (+/- 65 at 95%)**. This is
+Seger against Stockfish's own UCI_Elo calibration at a short time control, not an
+official rating-list number; treat it as a ballpark. The `vs_stockfish.py` tool
+needs a Stockfish binary (`--stockfish`), which is not vendored.
+
 ## Verifying move generation
 
 `make test` must pass in full. `perft_test` checks six standard positions
