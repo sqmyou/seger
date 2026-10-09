@@ -84,6 +84,23 @@ Any other UCI client works too. For a quick manual session you can pipe commands
 printf 'uci\nisready\nposition startpos\ngo depth 8\nquit\n' | build/seger
 ```
 
+## Playing in a browser
+
+If you cannot run the binary on your own machine (for example, the engine is
+built inside a sandbox), `tools/server.py` serves a small self-contained board
+UI that talks to the engine over HTTP:
+
+```sh
+make
+python3 tools/server.py                   # http://0.0.0.0:12000
+python3 tools/server.py --port 12001
+```
+
+Then open the port's address (in a hosted workspace this is the provided work
+URL for that port). The UI needs no internet access and no external assets; it
+is a single HTML file in `tools/web/`. The engine runs as a child process of the
+server, and only one move is searched at a time.
+
 ## Project layout
 
 ```
@@ -102,6 +119,8 @@ tests/
   search_test.cpp    Search and transposition-table tests
 tools/
   play.py            Terminal play helper (python-chess)
+  server.py          Local web-server play helper
+  web/index.html     Self-contained browser board UI
 ```
 
 ## Board representation

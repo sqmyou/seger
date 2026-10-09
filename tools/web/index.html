@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Seger — play the engine</title>
+<style>
+  :root {
+    --bg: #10131a;
+    --panel: #1a1f2b;
+    --panel-2: #232a39;
+    --ink: #e8ecf4;
+    --muted: #8b93a7;
+    --accent: #e0a458;
+    --light-sq: #e9e2cf;
+    --dark-sq: #6f7d63;
+    --sel: #d98f3a;
+    --hint: rgba(30, 30, 30, 0.28);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(circle at 20% 0%, #1b2130 0%, var(--bg) 55%);
+    color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .app {
+    display: grid;
+    grid-template-columns: minmax(320px, 560px) 280px;
+    gap: 28px;
+    align-items: start;
+    width: 100%;
+    max-width: 940px;
+  }
+  @media (max-width: 820px) {
+    .app { grid-template-columns: 1fr; }
+  }
+  header h1 {
+    margin: 0 0 2px;
+    font-size: 26px;
+    letter-spacing: 0.5px;
+    font-weight: 650;
+  }
+  header h1 span { color: var(--accent); }
+  header p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+
+  .board-wrap {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    grid-template-rows: repeat(8, 1fr);
+    width: 100%;
+    height: 100%;
+    user-select: none;
+  }
+  .sq {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .sq.light { background: var(--light-sq); }
+  .sq.dark { background: var(--dark-sq); }
+  .sq .piece {
+    font-size: clamp(26px, 8vw, 54px);
+    line-height: 1;
+    pointer-events: none;
+  }
+  .piece.w { color: #fbfbf7; text-shadow: 0 0 1px #2b2b2b, 0 0 2px #2b2b2b, 1px 1px 0 #9a9a9a; }
+  .piece.b { color: #17181c; text-shadow: 0 0 1px #f5f5f5, 1px 1px 0 #555; }
+  .sq.sel { box-shadow: inset 0 0 0 4px var(--sel); }
+  .sq.last::after {
+    content: ""; position: absolute; inset: 0;
+    background: rgba(224, 164, 88, 0.30);
+  }
+  .sq.check::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle, rgba(214,60,60,0.85) 0%, rgba(214,60,60,0.15) 62%, transparent 72%);
+  }
+  .hint {
+    position: absolute; width: 30%; height: 30%; border-radius: 50%;
+    background: var(--hint); pointer-events: none;
+  }
+  .hint.capture {
+    width: 92%; height: 92%; border-radius: 50%;
+    background: transparent;
+    box-shadow: inset 0 0 0 6px var(--hint);
+  }
+  .coord {
+    position: absolute; font-size: 11px; font-weight: 600; opacity: 0.55;
+    pointer-events: none;
+  }
+  .coord.rank { top: 2px; left: 5px; }
+  .coord.file { bottom: 2px; right: 6px; }
+  .sq.dark .coord { color: var(--light-sq); }
+  .sq.light .coord { color: var(--dark-sq); }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .status {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 600;
+    min-height: 24px;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+  .dot.thinking { animation: pulse 1s ease-in-out infinite; }
+  .dot.over { background: #6c7385; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 auto; }
+  label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+  select, button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px;
+    padding: 9px 11px;
+    cursor: pointer;
+  }
+  select:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary { background: var(--accent); color: #201703; border-color: transparent; font-weight: 650; }
+  button:disabled { opacity: 0.45; cursor: default; }
+
+  .moves {
+    background: var(--panel-2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    height: 150px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .moves b { color: var(--ink); font-weight: 600; }
+  .fen {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--muted); word-break: break-all;
+  }
+  .promo {
+    position: absolute; inset: 0; background: rgba(10,12,16,0.72);
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    backdrop-filter: blur(2px);
+  }
+  .promo button { font-size: 34px; padding: 8px 14px; line-height: 1; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <section>
+    <header>
+      <h1>Seger<span>.</span></h1>
+      <p>Play the engine in your browser. Click a piece, then a highlighted square.</p>
+    </header>
+    <div class="board-wrap">
+      <div class="board" id="board"></div>
+      <div class="promo hidden" id="promo"></div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></div>
+
+    <div class="row">
+      <label class="field">Play as
+        <select id="color">
+          <option value="white">White</option>
+          <option value="black">Black</option>
+        </select>
+      </label>
+      <label class="field">Engine time / move
+        <select id="time">
+          <option value="0.25">0.25 s</option>
+          <option value="0.5">0.5 s</option>
+          <option value="1" selected>1 s</option>
+          <option value="2">2 s</option>
+          <option value="5">5 s</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <button class="primary" id="newGame">New game</button>
+      <button id="undo">Undo</button>
+      <button id="flip">Flip</button>
+    </div>
+
+    <div class="moves" id="moves">1. —</div>
+    <div class="fen" id="fen"></div>
+  </aside>
+</div>
+
+<script>
+const PIECE = { p:"\u265F", n:"\u265E", b:"\u265D", r:"\u265C", q:"\u265B", k:"\u265A" };
+const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+const el = (id) => document.getElementById(id);
+const boardEl = el("board"), promoEl = el("promo");
+
+const state = {
+  moves: [],
+  fen: START_FEN,
+  legal: [],
+  turn: "white",
+  status: { over: false },
+  last: null,
+  selected: null,
+};
+let humanColor = "white";
+let flipped = false;
+let thinking = false;
+
+function api(path, body) {
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+}
+
+function squareName(file, rank) {
+  return String.fromCharCode(97 + file) + (rank + 1);
+}
+
+function parseFen(fen) {
+  const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
+  const rows = fen.split(" ")[0].split("/");
+  for (let i = 0; i < 8; i++) {
+    const rank = 7 - i;
+    let file = 0;
+    for (const ch of rows[i]) {
+      if (ch >= "1" && ch <= "8") { file += Number(ch); continue; }
+      const lower = ch.toLowerCase();
+      grid[rank][file] = { type: lower, color: ch === lower ? "b" : "w" };
+      file++;
+    }
+  }
+  return grid;
+}
+
+function render() {
+  const grid = parseFen(state.fen);
+  boardEl.innerHTML = "";
+  const ranks = flipped ? [...Array(8).keys()] : [...Array(8).keys()].reverse();
+  const files = flipped ? [...Array(8).keys()].reverse() : [...Array(8).keys()];
+
+  const legalTo = new Map();
+  if (state.selected) {
+    for (const uci of state.legal) {
+      if (uci.slice(0, 2) === state.selected) {
+        const to = uci.slice(2, 4);
+        legalTo.set(to, grid[Number(to[1]) - 1][to.charCodeAt(0) - 97] != null);
+      }
+    }
+  }
+  const lastPair = state.last ? [state.last.slice(0, 2), state.last.slice(2, 4)] : [];
+
+  for (const rank of ranks) {
+    for (const file of files) {
+      const name = squareName(file, rank);
+      const sq = document.createElement("div");
+      sq.className = "sq " + ((file + rank) % 2 === 0 ? "dark" : "light");
+      if (name === state.selected) sq.classList.add("sel");
+      if (lastPair.includes(name)) sq.classList.add("last");
+      const piece = grid[rank][file];
+      if (piece) {
+        const p = document.createElement("span");
+        p.className = "piece " + piece.color;
+        p.textContent = PIECE[piece.type];
+        sq.appendChild(p);
+        if (piece.type === "k" && state.status.reason === "check" &&
+            ((piece.color === "w") === (state.turn === "white"))) {
+          sq.classList.add("check");
+        }
+      }
+      if (legalTo.has(name)) {
+        const h = document.createElement("span");
+        h.className = "hint" + (legalTo.get(name) ? " capture" : "");
+        sq.appendChild(h);
+      }
+      const coordRank = document.createElement("span");
+      coordRank.className = "coord rank";
+      if (file === files[0]) coordRank.textContent = rank + 1;
+      const coordFile = document.createElement("span");
+      coordFile.className = "coord file";
+      if (rank === ranks[ranks.length - 1]) coordFile.textContent = String.fromCharCode(97 + file);
+      sq.appendChild(coordRank);
+      sq.appendChild(coordFile);
+      sq.addEventListener("click", () => onSquare(name));
+      boardEl.appendChild(sq);
+    }
+  }
+  renderMoves();
+  el("fen").textContent = state.fen;
+  el("undo").disabled = thinking || state.moves.length === 0;
+}
+
+function renderMoves() {
+  const box = el("moves");
+  if (!state.moves.length) { box.textContent = "1. \u2014"; return; }
+  let out = "";
+  for (let i = 0; i < state.moves.length; i++) {
+    if (i % 2 === 0) out += "<b>" + (i / 2 + 1) + ".</b> ";
+    out += state.moves[i] + " ";
+  }
+  box.innerHTML = out;
+  box.scrollTop = box.scrollHeight;
+}
+
+function setStatus(text, cls) {
+  el("statusText").textContent = text;
+  const dot = el("dot");
+  dot.className = "dot" + (cls ? " " + cls : "");
+}
+
+function applyState(data) {
+  state.fen = data.fen;
+  state.legal = data.legal;
+  state.turn = data.turn;
+  state.status = data.status;
+  render();
+  if (data.status && data.status.over) {
+    const r = data.status.result || "*";
+    setStatus("Game over \u2014 " + data.status.reason + " (" + r + ")", "over");
+  } else if (data.status && data.status.reason === "check") {
+    setStatus((state.turn === "white" ? "White" : "Black") + " is in check");
+  } else {
+    setStatus((state.turn === "white" ? "White" : "Black") + " to move");
+  }
+}
+
+async function refresh() {
+  const data = await api("/api/state", { fen: START_FEN, moves: state.moves });
+  applyState(data);
+  return data;
+}
+
+function isHumanTurn() { return state.turn === humanColor && !state.status.over; }
+
+function onSquare(name) {
+  if (thinking || !isHumanTurn()) return;
+  if (state.selected && state.selected !== name) {
+    const matches = state.legal.filter(
+      (u) => u.slice(0, 2) === state.selected && u.slice(2, 4) === name
+    );
+    if (matches.length === 1) return playMove(matches[0]);
+    if (matches.length > 1) return askPromotion(matches);
+  }
+  const own = state.legal.some((u) => u.slice(0, 2) === name);
+  state.selected = own ? (state.selected === name ? null : name) : null;
+  render();
+}
+
+function askPromotion(matches) {
+  promoEl.innerHTML = "";
+  promoEl.classList.remove("hidden");
+  for (const uci of matches) {
+    const btn = document.createElement("button");
+    btn.textContent = PIECE[uci.slice(4, 5)] || PIECE.q;
+    btn.title = uci;
+    btn.addEventListener("click", () => {
+      promoEl.classList.add("hidden");
+      playMove(uci);
+    });
+    promoEl.appendChild(btn);
+  }
+}
+
+async function playMove(uci) {
+  state.moves.push(uci);
+  state.selected = null;
+  state.last = uci;
+  const data = await refresh();
+  if (!data.status.over && state.turn !== humanColor) engineMove();
+}
+
+async function engineMove() {
+  thinking = true;
+  setStatus("Seger is thinking\u2026", "thinking");
+  render();
+  try {
+    const data = await api("/api/engine", {
+      fen: START_FEN,
+      moves: state.moves,
+      time: Number(el("time").value),
+    });
+    if (data.error) { setStatus("Engine error: " + data.error, "over"); return; }
+    if (data.move) {
+      state.moves.push(data.move);
+      state.last = data.move;
+    }
+    applyState(data);
+  } finally {
+    thinking = false;
+    render();
+    if (!state.status.over) {
+      setStatus((state.turn === "white" ? "White" : "Black") + " to move");
+    }
+  }
+}
+
+async function newGame() {
+  humanColor = el("color").value;
+  flipped = humanColor === "black";
+  state.moves = [];
+  state.selected = null;
+  state.last = null;
+  promoEl.classList.add("hidden");
+  await refresh();
+  if (state.turn !== humanColor) engineMove();
+}
+
+async function undo() {
+  if (thinking || !state.moves.length) return;
+  let moves = state.moves.slice();
+  moves.pop();
+  let data = await api("/api/state", { fen: START_FEN, moves });
+  if (data.turn !== humanColor && moves.length) {
+    moves.pop();
+    data = await api("/api/state", { fen: START_FEN, moves });
+  }
+  state.moves = moves;
+  state.last = moves.length ? moves[moves.length - 1] : null;
+  state.selected = null;
+  applyState(data);
+}
+
+el("newGame").addEventListener("click", newGame);
+el("undo").addEventListener("click", undo);
+el("flip").addEventListener("click", () => { flipped = !flipped; render(); });
+el("color").addEventListener("change", newGame);
+
+newGame();
+</script>
+</body>
+</html>

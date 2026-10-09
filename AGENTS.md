@@ -59,3 +59,10 @@ cross-check with python-chess (`chess.Board`), which is installed.
 - C++17, no external dependencies, no cmake.
 - Keep `-Wall -Wextra -Wpedantic` clean.
 - Identifiers use `camelCase` (see `types.h`); search `namespace seger`.
+
+## Playing / local UI
+
+`tools/play.py` plays in a terminal and `tools/server.py` serves a
+self-contained browser board (`tools/web/index.html`). Both drive the engine
+through `python-chess`'s UCI bridge, so they are the quickest way to exercise a
+change end to end. The web UI takes no external assets and needs no network.
