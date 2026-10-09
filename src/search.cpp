@@ -243,17 +243,34 @@ Move Search::think(const SearchLimits& limits) {
 
     // Time management: budget a slice of the remaining clock.
     hardDeadlineMs_ = 0;
+    softDeadlineMs_ = 0;
     if (limits.movetime > 0) {
+        // A fixed move time is treated as both the soft and hard ceiling; there
+        // is no extension, but iteration should run until the budget is used.
         hardDeadlineMs_ = limits.movetime;
+        softDeadlineMs_ = limits.movetime;
     } else if (limits.timeLeft > 0) {
-        int budget;
-        if (limits.movestogo > 0) {
-            budget = limits.timeLeft / limits.movestogo;
-        } else {
-            budget = limits.timeLeft / 30 + limits.increment / 2;
-        }
-        budget = std::min(budget, limits.timeLeft / 2);
-        hardDeadlineMs_ = std::max(budget, 1);
+        // Scale the slice with the amount of time left: spend more of it when
+        // there is plenty, and less when the clock is short, so a lost position
+        // or a low clock does not run out mid-search. A sudden-death game keeps
+        // a safety margin; a fixed move count divides evenly.
+        int estMoves = (limits.movestogo > 0) ? limits.movestogo : 24;
+        double scale = 1.0;
+        const int tl = limits.timeLeft;
+        if (tl < 2000)        scale = 0.40;
+        else if (tl < 5000)   scale = 0.55;
+        else if (tl < 15000)  scale = 0.75;
+        else                  scale = 1.00;
+        if (limits.movestogo > 0) scale = 1.0;  // respect the explicit control
+
+        int budget = (int)((double)tl / estMoves * scale) + limits.increment / 2;
+        int cap = (limits.movestogo > 0) ? tl : tl / 4;  // never reserve too much
+        if (budget > cap) budget = cap;
+        if (budget < 1) budget = 1;
+        softDeadlineMs_ = budget;
+        hardDeadlineMs_ = budget * 3;
+        if (hardDeadlineMs_ > tl - 30 && limits.movestogo == 0) hardDeadlineMs_ = std::max((int64_t)1, (int64_t)tl - 30);
+        if (hardDeadlineMs_ < 1) hardDeadlineMs_ = 1;
     } else if (limits.infinite) {
         hardDeadlineMs_ = 0;  // rely on "stop"
     }
@@ -264,10 +281,13 @@ Move Search::think(const SearchLimits& limits) {
     if (rootMoves.empty()) return MOVE_NONE;
 
     Move best = rootMoves.front();
+    Move prevBest = MOVE_NONE;   // best at depth-1 (for stability detection)
+    Move prevBest2 = MOVE_NONE;  // best at depth-2
     int maxDepth = limits.useDepth ? limits.depth : MAX_PLY;
     int prevScore = DRAW;
 
     for (int depth = 1; depth <= maxDepth; ++depth) {
+        const auto iterStart = std::chrono::steady_clock::now();
         // Aspiration window around the previous score (widened on a fail).
         int delta = 25;
         int alpha = -INF, beta = INF;
@@ -279,7 +299,8 @@ Move Search::think(const SearchLimits& limits) {
         Move iterBest = MOVE_NONE;
         int bestScore = -INF;
         const Move ttRootMove = [&]() -> Move {
-            const TTEntry* e = ttEnabled_ ? tt_.probe(pos_.key()) : nullptr;
+            uint64_t k = pos_.key();
+            const TTEntry* e = ttEnabled_ ? tt_.probe(k) : nullptr;
             return (e && e->hasMove) ? e->move : MOVE_NONE;
         }();
         scoreMoves(rootMoves, ttRootMove, 0);
@@ -371,8 +392,18 @@ Move Search::think(const SearchLimits& limits) {
         if (hardDeadlineMs_ > 0) {
             int64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                   std::chrono::steady_clock::now() - start_).count();
-            if (elapsed > hardDeadlineMs_ / 2) break;  // no time for another full depth
+            int64_t iterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - iterStart).count();
+            // Estimate the next iteration at ~1.7x the one just finished, then
+            // only continue if it fits inside the soft budget, or (when the
+            // best move has been stable for several depths) the hard budget.
+            bool stable = (depth >= 6 && best == prevBest && best == prevBest2);
+            int64_t limit = stable ? hardDeadlineMs_ : softDeadlineMs_;
+            int64_t projected = elapsed + iterMs * 7 / 4;
+            if (projected >= limit) break;
         }
+        prevBest2 = prevBest;
+        prevBest = best;
         if (stopped_) break;
     }
 

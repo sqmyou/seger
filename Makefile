@@ -9,6 +9,8 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic
 LDFLAGS  ?=
 LDLIBS   ?= -pthread
+# Emit .d files so a changed header forces a rebuild of every user.
+DEPFLAGS := -MMD -MP
 
 BUILD_DIR := build
 SRC_DIR   := src
@@ -32,8 +34,10 @@ all: $(ENGINE)
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
 
+-include $(ENGINE_OBJS:.o=.d)
+
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -I$(SRC_DIR) -c $< -o $@
 
 $(ENGINE): $(ENGINE_OBJS)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)

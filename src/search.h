@@ -62,6 +62,7 @@ private:
 
     std::chrono::steady_clock::time_point start_;
     int64_t hardDeadlineMs_ = 0;
+    int64_t softDeadlineMs_ = 0;
     uint64_t nodeLimit_ = 0;
     bool stopped_ = false;
     mutable std::atomic<bool> stopRequested_{false};

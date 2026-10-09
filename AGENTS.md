@@ -17,7 +17,12 @@ make divide   # builds build/perft_divide for move-generation debugging
 make bench    # quick fixed-depth benchmark (startpos, depth 9)
 ```
 
-There is no cmake; the project builds with plain `make` and `g++`.
+There is no cmake; the project builds with plain `make` and `g++`. Objects carry
+generated `-MMD` dependencies (`build/*.d`), so changing a header rebuilds every
+translation unit that includes it. If you ever build without them — or
+`CXXFLAGS` fails to pass `-MMD` — a header/struct change will silently leave
+stale `.o` files with mismatched layouts and crash at `-O2` with no other hint.
+When in doubt, `make clean && make`.
 
 `tools/selfplay.py` plays two engine binaries against each other
 (`--a build/seger --b /path/to/other --games 8 --depth 5`) and reports the
