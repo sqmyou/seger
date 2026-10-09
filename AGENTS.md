@@ -27,7 +27,12 @@ When in doubt, `make clean && make`.
 `tools/selfplay.py` plays two engine binaries against each other
 (`--a build/seger --b /path/to/other --games 8 --depth 5`) and reports the
 score and a rough Elo delta. Use it to check whether an evaluation or search
-change is actually an improvement before keeping it.
+change is actually an improvement before keeping it. `--parallel N` runs N
+games at once across cores (roughly N× faster wall-clock), and `--movetime`
+selects a time control instead of a fixed depth.
+
+CI (`.github/workflows/ci.yml`) runs `make`, `make test`, a UCI smoke test and
+`make bench` on every push to `main` and on pull requests. Keep it green.
 
 Bench/signature baseline: depth 9 from startpos settles at **140,502,299
 nodes** (~1.31 Mnps) with the tapered evaluation. The node count moves whenever
@@ -48,6 +53,24 @@ vs 2100. A pooled fit puts Seger at roughly **2075 Elo (+/- 65 at 95%)**. This i
 Seger against Stockfish's own UCI_Elo calibration at a short time control, not an
 official rating-list number; treat it as a ballpark. The `vs_stockfish.py` tool
 needs a Stockfish binary (`--stockfish`), which is not vendored.
+
+## Tried and rejected
+
+These were measured with `tools/selfplay.py` and did **not** help; do not
+re-introduce them without a fresh match that beats the baseline:
+
+- A second, larger evaluation rewrite (king-safety term, mobility areas, threat
+  detection, passed-pawn table, 7th-rank rook bonus) scored **0.417 over 60
+  games at depth 5**, i.e. about -58 Elo. The existing tapered evaluation is
+  already well tuned.
+- Reverse-futility pruning, futility pruning and late-move pruning, added on top
+  of the current search, cost roughly 300 Elo: the margins were too loose and the
+  engine started cutting good lines. If you add pruning, tune the margins with a
+  match, do not paste in textbook constants.
+- Enabling late-move reductions more aggressively (the old `isCapture` bug had
+  left LMR effectively dead) also lost: 0.500 at depth 5 and 0.125 at depth 7.
+  A conservative 1-ply LMR with TT/killer exclusions was still below baseline
+  (0.375 at depth 7). The move ordering is not yet good enough to support LMR.
 
 ## Verifying move generation
 

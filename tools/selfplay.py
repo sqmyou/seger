@@ -10,7 +10,8 @@ one (or the same binary twice), and read off the score and a rough Elo delta.
     python3 tools/selfplay.py --games 20 --depth 6
 
 Requires python-chess. Use --depth for reproducible, hardware-independent play,
-or --movetime for a time control.
+or --movetime for a time control. Use --parallel N to run N games at once across
+cores, which roughly divides wall-clock time by N.
 
 This is a small harness, not an SPRT replacement: a dozen games only resolves
 large differences. Treat a +20 game scoreline as noise and run more games.
@@ -19,6 +20,7 @@ large differences. Treat a +20 game scoreline as noise and run more games.
 import argparse
 import itertools
 import math
+import multiprocessing
 import sys
 
 import chess
@@ -72,6 +74,30 @@ def play_game(engine_a, engine_b, opening, limit, a_is_white, max_plies):
     return 0.5  # draw, stalemate, or adjudicated by the ply cap
 
 
+def _play_one(job):
+    """Worker for a parallel match: play a single game in its own process.
+
+    Each worker starts its own pair of engine processes, so the games are fully
+    independent and can run across cores.
+    """
+    index, a_path, b_path, opening, depth, movetime, hash_mb, a_is_white, max_plies = job
+    limit = (chess.engine.Limit(time=movetime) if movetime > 0
+             else chess.engine.Limit(depth=depth))
+    engine_a = chess.engine.SimpleEngine.popen_uci([a_path])
+    engine_b = chess.engine.SimpleEngine.popen_uci([b_path])
+    try:
+        for e in (engine_a, engine_b):
+            try:
+                e.configure({"Hash": hash_mb})
+            except chess.engine.EngineError:
+                pass
+        result = play_game(engine_a, engine_b, opening, limit, a_is_white, max_plies)
+    finally:
+        engine_a.quit()
+        engine_b.quit()
+    return index, result
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -85,6 +111,8 @@ def main() -> int:
     ap.add_argument("--max-plies", type=int, default=400)
     ap.add_argument("--opening-offset", type=int, default=0,
                     help="rotate the opening list by this many entries")
+    ap.add_argument("--parallel", type=int, default=1,
+                    help="games to run at once (default 1; use your core count)")
     args = ap.parse_args()
 
     if args.movetime > 0:
@@ -92,36 +120,56 @@ def main() -> int:
     else:
         limit = chess.engine.Limit(depth=args.depth)
 
-    engine_a = chess.engine.SimpleEngine.popen_uci([args.a])
-    engine_b = chess.engine.SimpleEngine.popen_uci([args.b])
-    for e in (engine_a, engine_b):
-        try:
-            e.configure({"Hash": args.hash})
-        except chess.engine.EngineError:
-            pass
+    openings = list(itertools.islice(
+        itertools.cycle(OPENINGS), args.opening_offset, args.opening_offset + args.games))
 
     score = 0.0
     wins = losses = draws = 0
-    try:
-        openings = itertools.islice(
-            itertools.cycle(OPENINGS), args.opening_offset, args.opening_offset + args.games)
-        for i, opening in enumerate(openings):
-            a_is_white = (i % 2 == 0)
-            result = play_game(engine_a, engine_b, opening, limit, a_is_white, args.max_plies)
-            score += result
-            if result == 1.0:
-                wins += 1
-            elif result == 0.0:
-                losses += 1
-            else:
-                draws += 1
-            color = "white" if a_is_white else "black"
-            print(f"game {i + 1}/{args.games}: A ({color}) "
-                  f"{'win' if result == 1 else 'loss' if result == 0 else 'draw'} "
-                  f"| score {score:.1f}", flush=True)
-    finally:
-        engine_a.quit()
-        engine_b.quit()
+
+    if args.parallel > 1:
+        jobs = [(i, args.a, args.b, opening, args.depth, args.movetime, args.hash,
+                 i % 2 == 0, args.max_plies)
+                for i, opening in enumerate(openings)]
+        results = {}
+        with multiprocessing.Pool(processes=args.parallel) as pool:
+            for index, result in pool.imap_unordered(_play_one, jobs):
+                results[index] = result
+                score += result
+                if result == 1.0:
+                    wins += 1
+                elif result == 0.0:
+                    losses += 1
+                else:
+                    draws += 1
+                print(f"game {len(results)}/{args.games} done "
+                      f"| score {score:.1f}", flush=True)
+    else:
+        engine_a = chess.engine.SimpleEngine.popen_uci([args.a])
+        engine_b = chess.engine.SimpleEngine.popen_uci([args.b])
+        for e in (engine_a, engine_b):
+            try:
+                e.configure({"Hash": args.hash})
+            except chess.engine.EngineError:
+                pass
+        try:
+            for i, opening in enumerate(openings):
+                a_is_white = (i % 2 == 0)
+                result = play_game(engine_a, engine_b, opening, limit, a_is_white,
+                                   args.max_plies)
+                score += result
+                if result == 1.0:
+                    wins += 1
+                elif result == 0.0:
+                    losses += 1
+                else:
+                    draws += 1
+                color = "white" if a_is_white else "black"
+                print(f"game {i + 1}/{args.games}: A ({color}) "
+                      f"{'win' if result == 1 else 'loss' if result == 0 else 'draw'} "
+                      f"| score {score:.1f}", flush=True)
+        finally:
+            engine_a.quit()
+            engine_b.quit()
 
     frac = score / args.games if args.games else 0.0
     print()
