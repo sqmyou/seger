@@ -1,0 +1,45 @@
+chess pieces — standard SVG set
+===============================
+
+Twelve files, `assets/chess/<colour>_<piece>.svg`, vendored for a chess game.
+
+Source:  Wikimedia Commons, the "Cburnett" chess piece set.
+         https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces
+Author:  Cburnett (https://commons.wikimedia.org/wiki/User:Cburnett)
+Licence: CC BY-SA 3.0 — https://creativecommons.org/licenses/by-sa/3.0/
+         Attribution is therefore required, and this file is it. Share-alike
+         applies to modified versions of these images.
+
+Each piece is drawn on a transparent 45×45 square, which is what the `t45`
+suffix in the upstream filename means. Nothing has been modified except the
+filenames; the SVG bytes are byte-for-byte as downloaded.
+
+Filename mapping
+----------------
+
+The upstream names encode piece and colour in one letter each
+(`Chess_<piece><colour>t45.svg`), which is compact but unreadable at a call
+site. Local names spell both out.
+
+    Chess_klt45.svg  ->  white_king.svg      Chess_kdt45.svg  ->  black_king.svg
+    Chess_qlt45.svg  ->  white_queen.svg     Chess_qdt45.svg  ->  black_queen.svg
+    Chess_rlt45.svg  ->  white_rook.svg      Chess_rdt45.svg  ->  black_rook.svg
+    Chess_blt45.svg  ->  white_bishop.svg    Chess_bdt45.svg  ->  black_bishop.svg
+    Chess_nlt45.svg  ->  white_knight.svg    Chess_ndt45.svg  ->  black_knight.svg
+    Chess_plt45.svg  ->  white_pawn.svg      Chess_pdt45.svg  ->  black_pawn.svg
+
+(`l` is light/white and `d` is dark/black. Piece letters are the usual
+algebraic ones: k q r b n p.)
+
+Fetched from `https://commons.wikimedia.org/wiki/Special:FilePath/<name>`, which
+resolves to the current file bytes. Do not re-download at runtime: the game
+renders from the vendored copies so a network hiccup or a deleted upstream file
+cannot break play.
+
+Why this set
+------------
+
+It is the de facto standard chess diagram set: unambiguous at small sizes,
+drawn to a consistent 45px grid, and already the shape players recognise from
+Wikipedia. The pieces are pure geometry with no board, so they can be drawn onto
+a board of any colour — which a raster screenshot of a board could not.

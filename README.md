@@ -101,6 +101,21 @@ URL for that port). The UI needs no internet access and no external assets; it
 is a single HTML file in `tools/web/`. The engine runs as a child process of the
 server, and only one move is searched at a time.
 
+The board uses the Cburnett SVG chess set, vendored from
+`sqmyou/games/assets/chess/` (Wikimedia Commons, CC BY-SA 3.0). See
+`tools/web/pieces/PIECES-LICENSE` for the attribution and terms.
+
+The server's JSON contract is small and both endpoints return the same shape, so
+the client never has to guess what is on the board:
+
+```
+POST /api/state   {"fen"?, "moves"?}          -> {fen, turn, legal[], status}
+POST /api/engine  {"fen"?, "moves"?, "time"}  -> {move, fen, turn, legal[], status}
+```
+
+`status` is `{over, result, reason}`. `legal` is always the mover's full legal
+move list, including in the `/api/engine` reply.
+
 ## Project layout
 
 ```
@@ -121,6 +136,7 @@ tools/
   play.py            Terminal play helper (python-chess)
   server.py          Local web-server play helper
   web/index.html     Self-contained browser board UI
+  web/pieces/*.svg   Cburnett chess set (CC BY-SA 3.0)
 ```
 
 ## Board representation

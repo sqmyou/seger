@@ -66,3 +66,12 @@ cross-check with python-chess (`chess.Board`), which is installed.
 self-contained browser board (`tools/web/index.html`). Both drive the engine
 through `python-chess`'s UCI bridge, so they are the quickest way to exercise a
 change end to end. The web UI takes no external assets and needs no network.
+
+Both HTTP endpoints return the same shape (`fen`, `turn`, `legal[]`, `status`),
+including `legal` in the `/api/engine` reply. Keep it that way: the browser
+client assumes it can move again immediately after the engine replies, and a
+response that drops `legal` strands the player after their first move.
+
+The board pieces are the Cburnett set vendored in `tools/web/pieces/`
+(CC BY-SA 3.0; attribution in `PIECES-LICENSE`). Do not re-download them at
+runtime.

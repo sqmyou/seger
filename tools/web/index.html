@@ -12,10 +12,10 @@
     --ink: #e8ecf4;
     --muted: #8b93a7;
     --accent: #e0a458;
-    --light-sq: #e9e2cf;
-    --dark-sq: #6f7d63;
+    --light-sq: #ebd9b4;
+    --dark-sq: #9d6b45;
     --sel: #d98f3a;
-    --hint: rgba(30, 30, 30, 0.28);
+    --hint: rgba(20, 20, 20, 0.30);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -73,16 +73,17 @@
   .sq.light { background: var(--light-sq); }
   .sq.dark { background: var(--dark-sq); }
   .sq .piece {
-    font-size: clamp(26px, 8vw, 54px);
-    line-height: 1;
+    width: 92%;
+    height: 92%;
+    object-fit: contain;
     pointer-events: none;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.45));
+    z-index: 1;
   }
-  .piece.w { color: #fbfbf7; text-shadow: 0 0 1px #2b2b2b, 0 0 2px #2b2b2b, 1px 1px 0 #9a9a9a; }
-  .piece.b { color: #17181c; text-shadow: 0 0 1px #f5f5f5, 1px 1px 0 #555; }
   .sq.sel { box-shadow: inset 0 0 0 4px var(--sel); }
   .sq.last::after {
     content: ""; position: absolute; inset: 0;
-    background: rgba(224, 164, 88, 0.30);
+    background: rgba(224, 164, 88, 0.32);
   }
   .sq.check::before {
     content: ""; position: absolute; inset: 0;
@@ -90,21 +91,21 @@
   }
   .hint {
     position: absolute; width: 30%; height: 30%; border-radius: 50%;
-    background: var(--hint); pointer-events: none;
+    background: var(--hint); pointer-events: none; z-index: 2;
   }
   .hint.capture {
-    width: 92%; height: 92%; border-radius: 50%;
+    width: 88%; height: 88%; border-radius: 50%;
     background: transparent;
     box-shadow: inset 0 0 0 6px var(--hint);
   }
   .coord {
-    position: absolute; font-size: 11px; font-weight: 600; opacity: 0.55;
-    pointer-events: none;
+    position: absolute; font-size: 11px; font-weight: 700;
+    pointer-events: none; z-index: 3;
   }
   .coord.rank { top: 2px; left: 5px; }
   .coord.file { bottom: 2px; right: 6px; }
-  .sq.dark .coord { color: var(--light-sq); }
   .sq.light .coord { color: var(--dark-sq); }
+  .sq.dark .coord { color: var(--light-sq); }
 
   .panel {
     background: var(--panel);
@@ -120,7 +121,7 @@
     font-weight: 600;
     min-height: 24px;
   }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
   .dot.thinking { animation: pulse 1s ease-in-out infinite; }
   .dot.over { background: #6c7385; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
@@ -162,8 +163,10 @@
     position: absolute; inset: 0; background: rgba(10,12,16,0.72);
     display: flex; align-items: center; justify-content: center; gap: 10px;
     backdrop-filter: blur(2px);
+    z-index: 10;
   }
-  .promo button { font-size: 34px; padding: 8px 14px; line-height: 1; }
+  .promo button { padding: 8px; display: flex; }
+  .promo img { width: 46px; height: 46px; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -213,8 +216,8 @@
 </div>
 
 <script>
-const PIECE = { p:"\u265F", n:"\u265E", b:"\u265D", r:"\u265C", q:"\u265B", k:"\u265A" };
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const PIECE_NAME = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
 
 const el = (id) => document.getElementById(id);
 const boardEl = el("board"), promoEl = el("promo");
@@ -232,6 +235,11 @@ let humanColor = "white";
 let flipped = false;
 let thinking = false;
 
+function pieceSrc(color, type) {
+  const c = color === "w" ? "white" : "black";
+  return "pieces/" + c + "_" + PIECE_NAME[type] + ".svg";
+}
+
 function api(path, body) {
   return fetch(path, {
     method: "POST",
@@ -246,11 +254,11 @@ function squareName(file, rank) {
 
 function parseFen(fen) {
   const grid = Array.from({ length: 8 }, () => Array(8).fill(null));
-  const rows = fen.split(" ")[0].split("/");
+  const rows = (fen || START_FEN).split(" ")[0].split("/");
   for (let i = 0; i < 8; i++) {
     const rank = 7 - i;
     let file = 0;
-    for (const ch of rows[i]) {
+    for (const ch of rows[i] || "") {
       if (ch >= "1" && ch <= "8") { file += Number(ch); continue; }
       const lower = ch.toLowerCase();
       grid[rank][file] = { type: lower, color: ch === lower ? "b" : "w" };
@@ -262,16 +270,18 @@ function parseFen(fen) {
 
 function render() {
   const grid = parseFen(state.fen);
+  const legal = Array.isArray(state.legal) ? state.legal : [];
   boardEl.innerHTML = "";
   const ranks = flipped ? [...Array(8).keys()] : [...Array(8).keys()].reverse();
   const files = flipped ? [...Array(8).keys()].reverse() : [...Array(8).keys()];
 
   const legalTo = new Map();
   if (state.selected) {
-    for (const uci of state.legal) {
+    for (const uci of legal) {
       if (uci.slice(0, 2) === state.selected) {
         const to = uci.slice(2, 4);
-        legalTo.set(to, grid[Number(to[1]) - 1][to.charCodeAt(0) - 97] != null);
+        const row = grid[Number(to[1]) - 1];
+        legalTo.set(to, !!(row && row[to.charCodeAt(0) - 97]));
       }
     }
   }
@@ -286,10 +296,12 @@ function render() {
       if (lastPair.includes(name)) sq.classList.add("last");
       const piece = grid[rank][file];
       if (piece) {
-        const p = document.createElement("span");
-        p.className = "piece " + piece.color;
-        p.textContent = PIECE[piece.type];
-        sq.appendChild(p);
+        const img = document.createElement("img");
+        img.className = "piece";
+        img.src = pieceSrc(piece.color, piece.type);
+        img.alt = piece.color + " " + piece.type;
+        img.draggable = false;
+        sq.appendChild(img);
         if (piece.type === "k" && state.status.reason === "check" &&
             ((piece.color === "w") === (state.turn === "white"))) {
           sq.classList.add("check");
@@ -331,20 +343,21 @@ function renderMoves() {
 
 function setStatus(text, cls) {
   el("statusText").textContent = text;
-  const dot = el("dot");
-  dot.className = "dot" + (cls ? " " + cls : "");
+  el("dot").className = "dot" + (cls ? " " + cls : "");
 }
 
+// Merge whatever the server returned, keeping fields we already hold when a
+// response omits them (the engine reply only carries fen/status/move).
 function applyState(data) {
-  state.fen = data.fen;
-  state.legal = data.legal;
-  state.turn = data.turn;
-  state.status = data.status;
+  if (!data || typeof data !== "object") return;
+  if (typeof data.fen === "string") state.fen = data.fen;
+  if (Array.isArray(data.legal)) state.legal = data.legal;
+  if (data.turn === "white" || data.turn === "black") state.turn = data.turn;
+  if (data.status) state.status = data.status;
   render();
-  if (data.status && data.status.over) {
-    const r = data.status.result || "*";
-    setStatus("Game over \u2014 " + data.status.reason + " (" + r + ")", "over");
-  } else if (data.status && data.status.reason === "check") {
+  if (state.status && state.status.over) {
+    setStatus("Game over \u2014 " + state.status.reason + " (" + (state.status.result || "*") + ")", "over");
+  } else if (state.status && state.status.reason === "check") {
     setStatus((state.turn === "white" ? "White" : "Black") + " is in check");
   } else {
     setStatus((state.turn === "white" ? "White" : "Black") + " to move");
@@ -378,8 +391,10 @@ function askPromotion(matches) {
   promoEl.classList.remove("hidden");
   for (const uci of matches) {
     const btn = document.createElement("button");
-    btn.textContent = PIECE[uci.slice(4, 5)] || PIECE.q;
+    const img = document.createElement("img");
+    img.src = pieceSrc(humanColor === "white" ? "w" : "b", uci.slice(4, 5));
     btn.title = uci;
+    btn.appendChild(img);
     btn.addEventListener("click", () => {
       promoEl.classList.add("hidden");
       playMove(uci);
@@ -392,8 +407,8 @@ async function playMove(uci) {
   state.moves.push(uci);
   state.selected = null;
   state.last = uci;
-  const data = await refresh();
-  if (!data.status.over && state.turn !== humanColor) engineMove();
+  await refresh();
+  if (!state.status.over && state.turn !== humanColor) engineMove();
 }
 
 async function engineMove() {
@@ -412,12 +427,12 @@ async function engineMove() {
       state.last = data.move;
     }
     applyState(data);
+    // The engine reply omits the legal list, so refetch it before the human moves.
+    if (!Array.isArray(data.legal) && !state.status.over) await refresh();
   } finally {
     thinking = false;
     render();
-    if (!state.status.over) {
-      setStatus((state.turn === "white" ? "White" : "Black") + " to move");
-    }
+    if (!state.status.over) setStatus((state.turn === "white" ? "White" : "Black") + " to move");
   }
 }
 
