@@ -47,12 +47,14 @@ Re-run the same command against a `build/seger` from commit `ee816e7` to
 reproduce it.
 
 Absolute strength via `tools/vs_stockfish.py` (Stockfish 19 strength-limited with
-`UCI_LimitStrength`/`UCI_Elo`, 100 ms/move, one SF thread, 40 games per anchor,
-colours alternated): Seger scored 0.675 vs SF-Elo 1900, 0.613 vs 2000 and 0.512
-vs 2100. A pooled fit puts Seger at roughly **2075 Elo (+/- 65 at 95%)**. This is
-Seger against Stockfish's own UCI_Elo calibration at a short time control, not an
-official rating-list number; treat it as a ballpark. The `vs_stockfish.py` tool
-needs a Stockfish binary (`--stockfish`), which is not vendored.
+`UCI_LimitStrength`/`UCI_Elo`, 100 ms/move, one SF thread, colours alternated).
+A clean 40-games-per-anchor run scored 0.662 vs SF-Elo 2100, 0.400 vs 2200 and
+0.475 vs 2300, putting Seger at roughly **2200-2250 Elo**. (An earlier 40-game
+run on a loaded machine gave 2075; that was contention, not a real difference —
+run these measurements on an idle CPU.) This is Seger against Stockfish's own
+UCI_Elo calibration at a short time control, not an official rating-list number;
+treat it as a ballpark. The `vs_stockfish.py` tool needs a Stockfish binary
+(`--stockfish`), which is not vendored.
 
 ## Tried and rejected
 
@@ -71,6 +73,10 @@ re-introduce them without a fresh match that beats the baseline:
   left LMR effectively dead) also lost: 0.500 at depth 5 and 0.125 at depth 7.
   A conservative 1-ply LMR with TT/killer exclusions was still below baseline
   (0.375 at depth 7). The move ordering is not yet good enough to support LMR.
+- A full-ply check extension (search checking moves one ply deeper) blew up the
+  search: `search_test` did not finish in minutes on a forced-check position
+  because every check extends again. If you want extensions, add them with a
+  cap (e.g. extend only above a depth threshold, or limit total extensions).
 
 ## Verifying move generation
 
