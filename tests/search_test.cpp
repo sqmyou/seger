@@ -45,6 +45,25 @@ static int bruteForce(Position& pos, int depth, int ply = 0) {
     return best;
 }
 
+// Recovers the score from the last info line in the captured search output.
+static int lastScore(const std::string& info) {
+    int score = INF + 1;
+    std::istringstream ss(info);
+    std::string line;
+    while (std::getline(ss, line)) {
+        auto p = line.find(" score ");
+        if (p == std::string::npos) continue;
+        std::istringstream ls(line.substr(p + 7));
+        std::string kind;
+        int value = 0;
+        ls >> kind >> value;
+        score = (kind == "mate")
+                    ? (value > 0 ? MATE - (2 * value - 1) : -MATE + (2 * -value - 1))
+                    : value;
+    }
+    return score;
+}
+
 // Runs the real search to a fixed depth and returns the reported score.
 static int searchScore(Position& pos, int depth) {
     Search search(pos);
@@ -54,21 +73,7 @@ static int searchScore(Position& pos, int depth) {
     lim.useDepth = true;
     lim.depth = depth;
     search.think(lim);
-    // Recover the score from the last info line we can parse.
-    int score = INF + 1;
-    std::istringstream ss(discard.str());
-    std::string line;
-    while (std::getline(ss, line)) {
-        auto p = line.find(" score ");
-        if (p == std::string::npos) continue;
-        std::istringstream ls(line.substr(p + 7));
-        std::string kind;
-        int value = 0;
-        ls >> kind >> value;
-        score = (kind == "mate") ? (value > 0 ? MATE - (2 * value - 1) : -MATE + (2 * -value - 1))
-                                 : value;
-    }
-    return score;
+    return lastScore(discard.str());
 }
 
 static int searchNodes(Position& pos, int depth, bool useTT) {
@@ -109,8 +114,9 @@ int main() {
     }
 
     // --- Transposition table -------------------------------------------------
-    // The TT must never change the move the search settles on, and should
-    // reduce the node count for iterative deepening.
+    // The TT is a lossless optimisation: it may reorder equally-good moves, but
+    // it must not change the score the search settles on. (Comparing moves
+    // directly is brittle: two moves can tie exactly.)
     {
         Position pos;
         pos.setStartpos();
@@ -128,10 +134,12 @@ int main() {
         SearchLimits lim;
         lim.useDepth = true;
         lim.depth = 7;
-        Move m1 = s1.think(lim);
-        Move m2 = s2.think(lim);
-        check(m1 == m2, "TT does not change the best move",
-              moveToString(m1) + " vs " + moveToString(m2));
+        s1.think(lim);
+        s2.think(lim);
+        int scoreWith = lastScore(o1.str());
+        int scoreWithout = lastScore(o2.str());
+        check(scoreWith == scoreWithout, "TT does not change the score",
+              "with=" + std::to_string(scoreWith) + " without=" + std::to_string(scoreWithout));
     }
 
     // --- Legality from a spread of positions --------------------------------

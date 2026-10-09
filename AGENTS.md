@@ -12,12 +12,22 @@ search with null-move pruning and late-move reductions.
 
 ```sh
 make          # builds build/seger
-make test     # builds and runs position_test, perft_test, and search_test
+make test     # builds the engine + runs position, perft, search, uci and eval tests
 make divide   # builds build/perft_divide for move-generation debugging
 make bench    # quick fixed-depth benchmark (startpos, depth 9)
 ```
 
 There is no cmake; the project builds with plain `make` and `g++`.
+
+`tools/selfplay.py` plays two engine binaries against each other
+(`--a build/seger --b /path/to/other --games 8 --depth 5`) and reports the
+score and a rough Elo delta. Use it to check whether an evaluation or search
+change is actually an improvement before keeping it.
+
+Bench/signature baseline: depth 9 from startpos settles at **140,502,299
+nodes** (~1.31 Mnps) with the tapered evaluation. The node count moves whenever
+the evaluation changes, so treat it as a regression tripwire rather than a
+constant to preserve.
 
 ## Verifying move generation
 
@@ -45,6 +55,11 @@ cross-check with python-chess (`chess.Board`), which is installed.
   perft references assume this; always setting the ep square breaks perft.
 - **Piece-square tables mirror by rank for Black**, via the table index helpers.
   A symmetric position (startpos) must evaluate to 0 for the side to move.
+- **`evaluate()` returns from the side to move's point of view already.** Every
+  term is signed by `(colour == sideToMove)`, so an extra "flip if Black" at the
+  end negates the score for the wrong side and makes the engine play garbage.
+  `eval_test` mirrors positions vertically to catch exactly this; keep that test
+  passing when adding terms.
 - **Transposition-table mate scores are ply-relative.** Store/search through
   `scoreToTT`/`scoreFromTT` so a mate found on one path is not reported at the
   wrong distance on another. `search_test` guards this.

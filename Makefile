@@ -2,7 +2,7 @@
 #
 # Targets:
 #   make            build the engine (build/seger)
-#   make test       build and run the unit + perft tests
+#   make test       build and run the unit, perft and UCI tests
 #   make clean      remove build artifacts
 
 CXX      ?= g++
@@ -23,7 +23,7 @@ ENGINE := $(BUILD_DIR)/seger
 TEST_COMMON_SRCS := $(filter-out $(SRC_DIR)/main.cpp,$(ENGINE_SRCS))
 TEST_COMMON_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(TEST_COMMON_SRCS))
 
-TEST_BINS := $(BUILD_DIR)/perft_test $(BUILD_DIR)/position_test $(BUILD_DIR)/search_test
+TEST_BINS := $(BUILD_DIR)/perft_test $(BUILD_DIR)/position_test $(BUILD_DIR)/search_test $(BUILD_DIR)/uci_test $(BUILD_DIR)/eval_test
 
 .PHONY: all test divide bench clean
 
@@ -47,23 +47,35 @@ $(BUILD_DIR)/position_test: $(TEST_DIR)/position_test.cpp $(TEST_COMMON_OBJS) | 
 $(BUILD_DIR)/search_test: $(TEST_DIR)/search_test.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
 
+$(BUILD_DIR)/uci_test: $(TEST_DIR)/uci_test.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(BUILD_DIR)/eval_test: $(TEST_DIR)/eval_test.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+
 # Perft-divide helper: ./build/perft_divide "<fen>" <depth>
 $(BUILD_DIR)/perft_divide: $(TEST_DIR)/perft_divide.cpp $(TEST_COMMON_OBJS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(SRC_DIR) $< $(TEST_COMMON_OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
 
-test: $(TEST_BINS)
+# Also build the engine so bench/self-play never run a stale binary.
+test: $(ENGINE) $(TEST_BINS)
 	@echo "== position_test =="
 	@$(BUILD_DIR)/position_test
 	@echo "== perft_test =="
 	@$(BUILD_DIR)/perft_test
 	@echo "== search_test =="
 	@$(BUILD_DIR)/search_test
+	@echo "== uci_test =="
+	@$(BUILD_DIR)/uci_test
+	@echo "== eval_test =="
+	@$(BUILD_DIR)/eval_test
 
 divide: $(BUILD_DIR)/perft_divide
 
-# Fixed-depth benchmark, useful for quick regression checks.
+# Fixed-depth benchmark: prints a stable node-count signature over eight
+# positions at a fixed depth. Use it to compare changes.
 bench: $(ENGINE)
-	@printf 'position startpos\ngo depth 9\nquit\n' | $(ENGINE) | tail -1
+	@$(ENGINE) bench 9
 
 clean:
 	rm -rf $(BUILD_DIR)

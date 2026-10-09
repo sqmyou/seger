@@ -1,6 +1,7 @@
 #include "position.h"
 
 #include <cstring>
+#include <iostream>
 #include <sstream>
 
 namespace seger {
@@ -613,6 +614,7 @@ void Position::generateLegalMoves(std::vector<Move>& moves) {
 }
 
 void Position::print() const {
+    std::ostream& os = std::cout;
     for (int rank = 7; rank >= 0; --rank) {
         std::string line = std::to_string(rank + 1) + " ";
         for (int file = 0; file < 8; ++file) {
@@ -633,10 +635,10 @@ void Position::print() const {
             line += c;
             line += ' ';
         }
-        printf("%s\n", line.c_str());
+        os << line << "\n";
     }
-    printf("  a b c d e f g h\n");
-    printf("FEN: %s\n", fen().c_str());
+    os << "  a b c d e f g h\n";
+    os << "FEN: " << fen() << "\n";
 }
 
 }  // namespace seger
