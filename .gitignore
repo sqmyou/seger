@@ -1,0 +1,6 @@
+build/
+*.o
+*.obj
+*.exe
+seger
+.DS_Store

@@ -1,0 +1,585 @@
+#include "position.h"
+
+#include <cstring>
+#include <sstream>
+
+namespace seger {
+
+namespace zobrist {
+uint64_t psq[PIECE_NB][BOARD_SIZE];
+uint64_t sideToMove;
+uint64_t castling[CASTLING_NB];
+uint64_t enPassant[BOARD_SIZE];
+
+// Small deterministic PRNG (splitmix64) so keys are stable across runs.
+static uint64_t rngState = 0x9E3779B97F4A7C15ULL;
+static uint64_t nextRandom() {
+    uint64_t z = (rngState += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+void init() {
+    rngState = 0x9E3779B97F4A7C15ULL;
+    for (int p = 0; p < PIECE_NB; ++p)
+        for (int sq = 0; sq < BOARD_SIZE; ++sq)
+            psq[p][sq] = nextRandom();
+    sideToMove = nextRandom();
+    for (int i = 0; i < CASTLING_NB; ++i) castling[i] = nextRandom();
+    for (int sq = 0; sq < BOARD_SIZE; ++sq) enPassant[sq] = nextRandom();
+}
+}  // namespace zobrist
+
+namespace {
+
+constexpr int KnightOffsets[8] = {-18, -33, -31, -14, 14, 31, 33, 18};
+constexpr int KingOffsets[8]   = {-17, -16, -15, -1, 1, 15, 16, 17};
+constexpr int BishopDirs[4]    = {-17, -15, 15, 17};
+constexpr int RookDirs[4]      = {-16, -1, 1, 16};
+
+inline bool safe(int sq) { return sq >= 0 && sq < BOARD_SIZE && isOnBoard(sq); }
+
+}  // namespace
+
+Position::Position() : side_(WHITE), castling_(NO_CASTLING), ep_(SQ_NONE),
+                       fifty_(0), fullmove_(1), key_(0), occupied_(0) {
+    board_.fill(NO_PIECE);
+    byColor_[WHITE] = byColor_[BLACK] = 0;
+    kingSq_[WHITE] = kingSq_[BLACK] = SQ_NONE;
+}
+
+void Position::putPiece(Piece p, int sq) {
+    board_[sq] = p;
+    if (p == NO_PIECE) return;
+    uint64_t bit = bitOf(sq);
+    byColor_[colorOf(p)] |= bit;
+    occupied_ |= bit;
+    if (typeOf(p) == KING) kingSq_[colorOf(p)] = sq;
+}
+
+void Position::removePiece(int sq) {
+    Piece p = board_[sq];
+    if (p == NO_PIECE) return;
+    uint64_t bit = bitOf(sq);
+    byColor_[colorOf(p)] &= ~bit;
+    occupied_ &= ~bit;
+    board_[sq] = NO_PIECE;
+}
+
+void Position::movePiece(int from, int to) {
+    Piece p = board_[from];
+    removePiece(to);    // clear any captured piece (and its bitboards)
+    removePiece(from);
+    putPiece(p, to);
+}
+
+static uint64_t computeKey(const std::array<Piece, BOARD_SIZE>& board,
+                           Color side, int castling, int ep) {
+    uint64_t k = 0;
+    for (int sq = 0; sq < BOARD_SIZE; ++sq) {
+        Piece p = board[sq];
+        if (p != NO_PIECE) k ^= zobrist::psq[p][sq];
+    }
+    if (side == BLACK) k ^= zobrist::sideToMove;
+    k ^= zobrist::castling[castling];
+    if (ep != SQ_NONE) k ^= zobrist::enPassant[ep];
+    return k;
+}
+
+void Position::setStartpos() {
+    setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+}
+
+bool Position::setFen(const std::string& fen) {
+    board_.fill(NO_PIECE);
+    byColor_[WHITE] = byColor_[BLACK] = 0;
+    occupied_ = 0;
+    kingSq_[WHITE] = kingSq_[BLACK] = SQ_NONE;
+    castling_ = NO_CASTLING;
+    ep_ = SQ_NONE;
+    fifty_ = 0;
+    fullmove_ = 1;
+    history_.clear();
+
+    std::istringstream ss(fen);
+    std::string boardField, sideField, castleField, epField;
+    if (!(ss >> boardField >> sideField)) return false;
+    ss >> castleField >> epField;
+    ss >> fifty_;
+    ss >> fullmove_;
+
+    int rank = 7, file = 0;
+    for (char c : boardField) {
+        if (c == '/') {
+            --rank;
+            file = 0;
+            if (rank < 0) return false;
+        } else if (c >= '1' && c <= '8') {
+            file += c - '0';
+        } else {
+            Piece p = NO_PIECE;
+            switch (c) {
+                case 'P': p = W_PAWN; break;   case 'N': p = W_KNIGHT; break;
+                case 'B': p = W_BISHOP; break; case 'R': p = W_ROOK; break;
+                case 'Q': p = W_QUEEN; break;  case 'K': p = W_KING; break;
+                case 'p': p = B_PAWN; break;   case 'n': p = B_KNIGHT; break;
+                case 'b': p = B_BISHOP; break; case 'r': p = B_ROOK; break;
+                case 'q': p = B_QUEEN; break;  case 'k': p = B_KING; break;
+                default: return false;
+            }
+            if (file > 7 || rank < 0) return false;
+            putPiece(p, makeSquare(file, rank));
+            ++file;
+        }
+    }
+
+    side_ = (sideField == "b") ? BLACK : WHITE;
+
+    if (castleField != "-") {
+        for (char c : castleField) {
+            switch (c) {
+                case 'K': castling_ |= WHITE_OO; break;
+                case 'Q': castling_ |= WHITE_OOO; break;
+                case 'k': castling_ |= BLACK_OO; break;
+                case 'q': castling_ |= BLACK_OOO; break;
+                default: break;
+            }
+        }
+    }
+
+    if (epField != "-") {
+        int sq = stringToSquare(epField);
+        if (sq != SQ_NONE) ep_ = sq;
+    }
+
+    key_ = computeKey(board_, side_, castling_, ep_);
+    return true;
+}
+
+std::string Position::fen() const {
+    std::string out;
+    for (int rank = 7; rank >= 0; --rank) {
+        int empty = 0;
+        for (int file = 0; file < 8; ++file) {
+            Piece p = board_[makeSquare(file, rank)];
+            if (p == NO_PIECE) {
+                ++empty;
+                continue;
+            }
+            if (empty) { out += char('0' + empty); empty = 0; }
+            char c = '?';
+            switch (typeOf(p)) {
+                case PAWN:   c = 'p'; break;
+                case KNIGHT: c = 'n'; break;
+                case BISHOP: c = 'b'; break;
+                case ROOK:   c = 'r'; break;
+                case QUEEN:  c = 'q'; break;
+                case KING:   c = 'k'; break;
+                default: break;
+            }
+            if (colorOf(p) == WHITE) c = char(c - 'a' + 'A');
+            out += c;
+        }
+        if (empty) out += char('0' + empty);
+        if (rank) out += '/';
+    }
+    out += ' ';
+    out += (side_ == WHITE ? 'w' : 'b');
+    out += ' ';
+    if (castling_ == NO_CASTLING) {
+        out += '-';
+    } else {
+        if (castling_ & WHITE_OO)  out += 'K';
+        if (castling_ & WHITE_OOO) out += 'Q';
+        if (castling_ & BLACK_OO)  out += 'k';
+        if (castling_ & BLACK_OOO) out += 'q';
+    }
+    out += ' ';
+    out += (ep_ == SQ_NONE ? "-" : squareToString(ep_));
+    out += ' ';
+    out += std::to_string(fifty_);
+    out += ' ';
+    out += std::to_string(fullmove_);
+    return out;
+}
+
+bool Position::squareAttacked(int sq, Color by) const {
+    // Pawn attacks: a pawn of color `by` on p attacks sq when the offset from
+    // p to sq matches the pawn capture direction of that color.
+    if (by == WHITE) {
+        int a = sq - 15, b = sq - 17;
+        if (safe(a) && board_[a] == W_PAWN) return true;
+        if (safe(b) && board_[b] == W_PAWN) return true;
+    } else {
+        int a = sq + 15, b = sq + 17;
+        if (safe(a) && board_[a] == B_PAWN) return true;
+        if (safe(b) && board_[b] == B_PAWN) return true;
+    }
+
+    // Knights.
+    Piece knight = makePiece(by, KNIGHT);
+    for (int off : KnightOffsets) {
+        int s = sq + off;
+        if (safe(s) && board_[s] == knight) return true;
+    }
+
+    // King.
+    Piece king = makePiece(by, KING);
+    for (int off : KingOffsets) {
+        int s = sq + off;
+        if (safe(s) && board_[s] == king) return true;
+    }
+
+    // Sliding: diagonals (bishop/queen) then orthogonals (rook/queen).
+    Piece bishop = makePiece(by, BISHOP), queen = makePiece(by, QUEEN);
+    for (int d : BishopDirs) {
+        for (int s = sq + d; safe(s); s += d) {
+            Piece p = board_[s];
+            if (p == NO_PIECE) continue;
+            if (p == bishop || p == queen) return true;
+            break;
+        }
+    }
+    Piece rook = makePiece(by, ROOK);
+    for (int d : RookDirs) {
+        for (int s = sq + d; safe(s); s += d) {
+            Piece p = board_[s];
+            if (p == NO_PIECE) continue;
+            if (p == rook || p == queen) return true;
+            break;
+        }
+    }
+    return false;
+}
+
+bool Position::isInCheck(Color c) const {
+    int ksq = kingSq_[c];
+    if (ksq == SQ_NONE) return false;
+    return squareAttacked(ksq, ~c);
+}
+
+void Position::generatePawnMoves(std::vector<Move>& moves, bool onlyCaptures) const {
+    const int forward = (side_ == WHITE) ? 16 : -16;
+    const int startRank = (side_ == WHITE) ? 1 : 6;
+    const int promoRank = (side_ == WHITE) ? 7 : 0;
+    const Piece pawn = makePiece(side_, PAWN);
+    const uint64_t them = byColor_[~side_];
+
+    for (uint64_t bb = byColor_[side_]; bb; bb &= bb - 1) {
+        int from = squareOfBitIndex(__builtin_ctzll(bb));
+        if (board_[from] != pawn) continue;
+
+        // Captures (including en passant).
+        for (int dc : {forward - 1, forward + 1}) {
+            int to = from + dc;
+            if (!safe(to)) continue;
+            bool enemy = testBit(them, to);
+            int victimSq = to + (side_ == WHITE ? -16 : 16);
+            bool epCapture = (to == ep_ && board_[to] == NO_PIECE &&
+                              safe(victimSq) &&
+                              board_[victimSq] == makePiece(~side_, PAWN));
+            if (!enemy && !epCapture) continue;
+            if (rankOf(to) == promoRank) {
+                for (PieceType pt : {QUEEN, ROOK, BISHOP, KNIGHT}) {
+                    Move m{from, to, pt, (uint8_t)(MF_PROMOTION | (epCapture ? MF_ENPASSANT : 0))};
+                    moves.push_back(m);
+                }
+            } else {
+                Move m{from, to, NO_PIECE_TYPE, (uint8_t)(epCapture ? MF_ENPASSANT : MF_NORMAL)};
+                moves.push_back(m);
+            }
+        }
+
+        if (onlyCaptures) continue;
+
+        // Single push.
+        int to = from + forward;
+        if (safe(to) && board_[to] == NO_PIECE) {
+            if (rankOf(to) == promoRank) {
+                for (PieceType pt : {QUEEN, ROOK, BISHOP, KNIGHT})
+                    moves.push_back(Move{from, to, pt, MF_PROMOTION});
+            } else {
+                moves.push_back(Move{from, to, NO_PIECE_TYPE, MF_NORMAL});
+                // Double push.
+                if (rankOf(from) == startRank) {
+                    int to2 = to + forward;
+                    if (board_[to2] == NO_PIECE)
+                        moves.push_back(Move{from, to2, NO_PIECE_TYPE, MF_DOUBLE_PUSH});
+                }
+            }
+        }
+    }
+}
+
+void Position::generateKnightMoves(std::vector<Move>& moves, bool onlyCaptures) const {
+    const Piece knight = makePiece(side_, KNIGHT);
+    const uint64_t them = byColor_[~side_];
+    for (uint64_t bb = byColor_[side_]; bb; bb &= bb - 1) {
+        int from = squareOfBitIndex(__builtin_ctzll(bb));
+        if (board_[from] != knight) continue;
+        for (int off : KnightOffsets) {
+            int to = from + off;
+            if (!safe(to)) continue;
+            bool enemy = testBit(them, to);
+            if (onlyCaptures && !enemy) continue;
+            if (board_[to] != NO_PIECE && !enemy) continue;  // own piece
+            moves.push_back(Move{from, to, NO_PIECE_TYPE, MF_NORMAL});
+        }
+    }
+}
+
+void Position::generateSlidingMoves(std::vector<Move>& moves, bool onlyCaptures) const {
+    const uint64_t them = byColor_[~side_];
+    for (uint64_t bb = byColor_[side_]; bb; bb &= bb - 1) {
+        int from = squareOfBitIndex(__builtin_ctzll(bb));
+        Piece p = board_[from];
+        PieceType pt = typeOf(p);
+        if (pt != BISHOP && pt != ROOK && pt != QUEEN) continue;
+
+        const int* dirs;
+        int n;
+        if (pt == BISHOP) { dirs = BishopDirs; n = 4; }
+        else if (pt == ROOK) { dirs = RookDirs; n = 4; }
+        else { dirs = KingOffsets; n = 8; }  // queen uses all 8 directions
+
+        for (int i = 0; i < n; ++i) {
+            int d = dirs[i];
+            for (int to = from + d; safe(to); to += d) {
+                bool enemy = testBit(them, to);
+                if (board_[to] != NO_PIECE) {
+                    if (enemy && (onlyCaptures || true))
+                        moves.push_back(Move{from, to, NO_PIECE_TYPE, MF_NORMAL});
+                    break;
+                }
+                if (!onlyCaptures)
+                    moves.push_back(Move{from, to, NO_PIECE_TYPE, MF_NORMAL});
+            }
+        }
+    }
+}
+
+void Position::generateKingMoves(std::vector<Move>& moves, bool onlyCaptures) const {
+    int from = kingSq_[side_];
+    if (from == SQ_NONE) return;
+    const uint64_t them = byColor_[~side_];
+    for (int off : KingOffsets) {
+        int to = from + off;
+        if (!safe(to)) continue;
+        bool enemy = testBit(them, to);
+        if (onlyCaptures && !enemy) continue;
+        if (board_[to] != NO_PIECE && !enemy) continue;
+        moves.push_back(Move{from, to, NO_PIECE_TYPE, MF_NORMAL});
+    }
+}
+
+void Position::generateCastlingMoves(std::vector<Move>& moves) const {
+    if (side_ == WHITE) {
+        if (isInCheck(WHITE)) return;
+        if ((castling_ & WHITE_OO) &&
+            board_[makeSquare(5, 0)] == NO_PIECE &&
+            board_[makeSquare(6, 0)] == NO_PIECE &&
+            board_[makeSquare(7, 0)] == W_ROOK &&
+            !squareAttacked(makeSquare(5, 0), BLACK) &&
+            !squareAttacked(makeSquare(6, 0), BLACK)) {
+            moves.push_back(Move{makeSquare(4, 0), makeSquare(6, 0), NO_PIECE_TYPE, MF_CASTLE});
+        }
+        if ((castling_ & WHITE_OOO) &&
+            board_[makeSquare(1, 0)] == NO_PIECE &&
+            board_[makeSquare(2, 0)] == NO_PIECE &&
+            board_[makeSquare(3, 0)] == NO_PIECE &&
+            board_[makeSquare(0, 0)] == W_ROOK &&
+            !squareAttacked(makeSquare(3, 0), BLACK) &&
+            !squareAttacked(makeSquare(2, 0), BLACK)) {
+            moves.push_back(Move{makeSquare(4, 0), makeSquare(2, 0), NO_PIECE_TYPE, MF_CASTLE});
+        }
+    } else {
+        if (isInCheck(BLACK)) return;
+        if ((castling_ & BLACK_OO) &&
+            board_[makeSquare(5, 7)] == NO_PIECE &&
+            board_[makeSquare(6, 7)] == NO_PIECE &&
+            board_[makeSquare(7, 7)] == B_ROOK &&
+            !squareAttacked(makeSquare(5, 7), WHITE) &&
+            !squareAttacked(makeSquare(6, 7), WHITE)) {
+            moves.push_back(Move{makeSquare(4, 7), makeSquare(6, 7), NO_PIECE_TYPE, MF_CASTLE});
+        }
+        if ((castling_ & BLACK_OOO) &&
+            board_[makeSquare(1, 7)] == NO_PIECE &&
+            board_[makeSquare(2, 7)] == NO_PIECE &&
+            board_[makeSquare(3, 7)] == NO_PIECE &&
+            board_[makeSquare(0, 7)] == B_ROOK &&
+            !squareAttacked(makeSquare(3, 7), WHITE) &&
+            !squareAttacked(makeSquare(2, 7), WHITE)) {
+            moves.push_back(Move{makeSquare(4, 7), makeSquare(2, 7), NO_PIECE_TYPE, MF_CASTLE});
+        }
+    }
+}
+
+void Position::generateMoves(std::vector<Move>& moves, bool onlyCaptures) const {
+    generatePawnMoves(moves, onlyCaptures);
+    generateKnightMoves(moves, onlyCaptures);
+    generateSlidingMoves(moves, onlyCaptures);
+    generateKingMoves(moves, onlyCaptures);
+    if (!onlyCaptures) generateCastlingMoves(moves);
+}
+
+void Position::doMove(const Move& m) {
+    StateInfo st;
+    st.castlingRights = castling_;
+    st.epSquare = ep_;
+    st.fiftyMove = fifty_;
+    st.captured = NO_PIECE;
+
+    const Color us = side_;
+    const Color them = ~us;
+
+    if (m.hasFlag(MF_ENPASSANT)) {
+        int victimSq = m.to + (us == WHITE ? -16 : 16);
+        st.captured = board_[victimSq];
+        removePiece(victimSq);
+        movePiece(m.from, m.to);
+    } else if (m.hasFlag(MF_CASTLE)) {
+        bool kingSide = fileOf(m.to) == 6;
+        int rank = rankOf(m.from);
+        if (kingSide) {
+            movePiece(makeSquare(7, rank), makeSquare(5, rank));
+        } else {
+            movePiece(makeSquare(0, rank), makeSquare(3, rank));
+        }
+        movePiece(m.from, m.to);
+    } else {
+        if (board_[m.to] != NO_PIECE) st.captured = board_[m.to];
+        movePiece(m.from, m.to);
+        if (m.hasFlag(MF_PROMOTION)) {
+            removePiece(m.to);
+            putPiece(makePiece(us, m.promotion), m.to);
+        }
+    }
+
+    // Update castling rights.
+    Piece moved = board_[m.to];
+    if (typeOf(moved) == KING) {
+        castling_ &= (us == WHITE) ? ~(WHITE_OO | WHITE_OOO) : ~(BLACK_OO | BLACK_OOO);
+    }
+    // Rook moves / rook captures clear the relevant right.
+    auto clearRook = [&](int sq) {
+        if (sq == makeSquare(0, 0)) castling_ &= ~WHITE_OOO;
+        else if (sq == makeSquare(7, 0)) castling_ &= ~WHITE_OO;
+        else if (sq == makeSquare(0, 7)) castling_ &= ~BLACK_OOO;
+        else if (sq == makeSquare(7, 7)) castling_ &= ~BLACK_OO;
+    };
+    if (typeOf(moved) == ROOK) clearRook(m.to);
+    if (typeOf(moved) == KING) { /* handled above */ }
+    if (typeOf(board_[m.from]) == ROOK) clearRook(m.from);
+    if (st.captured != NO_PIECE && typeOf(st.captured) == ROOK) {
+        // Captured rook square: for en passant not possible; else it's m.to.
+        if (!m.hasFlag(MF_ENPASSANT)) clearRook(m.to);
+    }
+
+    // En-passant square: only set it when an enemy pawn can actually capture,
+    // which keeps positions identical to the standard perft references.
+    ep_ = SQ_NONE;
+    if (m.hasFlag(MF_DOUBLE_PUSH)) {
+        int e = m.from + (us == WHITE ? 16 : -16);
+        Piece enemyPawn = makePiece(~us, PAWN);
+        int o1 = (us == WHITE) ? 15 : -17;
+        int o2 = (us == WHITE) ? 17 : -15;
+        if ((safe(e + o1) && board_[e + o1] == enemyPawn) ||
+            (safe(e + o2) && board_[e + o2] == enemyPawn))
+            ep_ = e;
+    }
+
+    // Halfmove clock.
+    if (typeOf(moved) == PAWN || st.captured != NO_PIECE) fifty_ = 0;
+    else fifty_ = st.fiftyMove + 1;
+
+    if (us == BLACK) ++fullmove_;
+
+    side_ = them;
+    key_ = computeKey(board_, side_, castling_, ep_);
+    st.key = key_;
+    history_.push_back(st);
+}
+
+void Position::undoMove(const Move& m) {
+    if (history_.empty()) return;
+    StateInfo st = history_.back();
+    history_.pop_back();
+
+    const Color us = ~side_;  // side that made the move
+    side_ = us;
+
+    if (m.hasFlag(MF_ENPASSANT)) {
+        int victimSq = m.to + (us == WHITE ? -16 : 16);
+        movePiece(m.to, m.from);
+        putPiece(makePiece(~us, PAWN), victimSq);
+    } else if (m.hasFlag(MF_CASTLE)) {
+        bool kingSide = fileOf(m.to) == 6;
+        int rank = rankOf(m.from);
+        movePiece(m.to, m.from);
+        if (kingSide) {
+            movePiece(makeSquare(5, rank), makeSquare(7, rank));
+        } else {
+            movePiece(makeSquare(3, rank), makeSquare(0, rank));
+        }
+    } else {
+        // Undo promotion by restoring the pawn before moving back.
+        if (m.hasFlag(MF_PROMOTION)) {
+            removePiece(m.to);
+            putPiece(makePiece(us, PAWN), m.from);
+        } else {
+            movePiece(m.to, m.from);
+        }
+        if (st.captured != NO_PIECE) putPiece(st.captured, m.to);
+    }
+
+    castling_ = st.castlingRights;
+    ep_ = st.epSquare;
+    fifty_ = st.fiftyMove;
+    if (us == BLACK) --fullmove_;
+    key_ = computeKey(board_, side_, castling_, ep_);
+}
+
+bool Position::isLegal(const Move& m) const {
+    // A non-const make/unmake on a copy is the simplest correct filter.
+    Position copy = *this;
+    copy.doMove(m);
+    return !copy.isInCheck(side_);
+}
+
+void Position::generateLegalMoves(std::vector<Move>& moves) const {
+    std::vector<Move> pseudo;
+    pseudo.reserve(64);
+    generateMoves(pseudo, false);
+    for (const Move& m : pseudo)
+        if (isLegal(m)) moves.push_back(m);
+}
+
+void Position::print() const {
+    for (int rank = 7; rank >= 0; --rank) {
+        std::string line = std::to_string(rank + 1) + " ";
+        for (int file = 0; file < 8; ++file) {
+            Piece p = board_[makeSquare(file, rank)];
+            char c = '.';
+            if (p != NO_PIECE) {
+                switch (typeOf(p)) {
+                    case PAWN:   c = 'p'; break;
+                    case KNIGHT: c = 'n'; break;
+                    case BISHOP: c = 'b'; break;
+                    case ROOK:   c = 'r'; break;
+                    case QUEEN:  c = 'q'; break;
+                    case KING:   c = 'k'; break;
+                    default: break;
+                }
+                if (colorOf(p) == WHITE) c = char(c - 'a' + 'A');
+            }
+            line += c;
+            line += ' ';
+        }
+        printf("%s\n", line.c_str());
+    }
+    printf("  a b c d e f g h\n");
+    printf("FEN: %s\n", fen().c_str());
+}
+
+}  // namespace seger

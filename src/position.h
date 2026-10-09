@@ -1,0 +1,114 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "types.h"
+
+namespace seger {
+
+// Number of board squares in the 0x88 mailbox (128 entries, half unused).
+constexpr int BOARD_SIZE = 128;
+
+// Extra state that a make/unmake cycle must restore.
+struct StateInfo {
+    int castlingRights;
+    int epSquare;        // en-passant target square, or SQ_NONE
+    int fiftyMove;       // halfmove clock
+    uint64_t key;        // Zobrist key after the move
+    Piece captured;      // piece removed from `to` (or en-passant victim)
+};
+
+class Position {
+public:
+    Position();
+
+    // Initialises the standard starting position.
+    void setStartpos();
+
+    // Loads a position from a FEN string. Returns false on parse failure.
+    bool setFen(const std::string& fen);
+
+    // Returns the FEN representation of the current position.
+    std::string fen() const;
+
+    // --- Board accessors ---------------------------------------------------
+    Piece pieceOn(int sq) const { return board_[sq]; }
+    Color sideToMove() const { return side_; }
+    int castlingRights() const { return castling_; }
+    int epSquare() const { return ep_; }
+    int fiftyMove() const { return fifty_; }
+    int fullMoves() const { return fullmove_; }
+    uint64_t key() const { return key_; }
+
+    int kingSquare(Color c) const { return kingSq_[c]; }
+    bool isInCheck(Color c) const;
+
+    uint64_t colorBB(Color c) const { return byColor_[c]; }
+    uint64_t occupiedBB() const { return occupied_; }
+
+    // --- Move making -------------------------------------------------------
+    // Applies a move to the position; pushes undo information. The caller is
+    // responsible for only passing moves that were generated for this
+    // position (so `captured` can be derived correctly).
+    void doMove(const Move& m);
+    void undoMove(const Move& m);
+
+    // --- Move generation ---------------------------------------------------
+    // Generates all pseudo-legal moves for the side to move. When
+    // `onlyCaptures` is set, only captures (and promotions) are generated,
+    // which the search uses for quiescence.
+    void generateMoves(std::vector<Move>& moves, bool onlyCaptures = false) const;
+
+    // Generates fully legal moves.
+    void generateLegalMoves(std::vector<Move>& moves) const;
+
+    // Returns true if the move is legal in this position.
+    bool isLegal(const Move& m) const;
+
+    // --- Output ------------------------------------------------------------
+    void print() const;
+
+private:
+    std::array<Piece, BOARD_SIZE> board_;
+    Color side_;
+    int castling_;
+    int ep_;
+    int fifty_;
+    int fullmove_;
+    int kingSq_[COLOR_NB];
+    uint64_t key_;
+
+    std::vector<StateInfo> history_;
+
+    // Bitboards tracking all occupied squares (for quick movegen scans). We
+    // keep one per color for efficient "does this square hold an enemy piece"
+    // checks in pawn/king move generation.
+    uint64_t byColor_[COLOR_NB];
+    uint64_t occupied_;
+
+    void putPiece(Piece p, int sq);
+    void removePiece(int sq);
+    void movePiece(int from, int to);
+
+    void generatePawnMoves(std::vector<Move>& moves, bool onlyCaptures) const;
+    void generateKnightMoves(std::vector<Move>& moves, bool onlyCaptures) const;
+    void generateSlidingMoves(std::vector<Move>& moves, bool onlyCaptures) const;
+    void generateKingMoves(std::vector<Move>& moves, bool onlyCaptures) const;
+    void generateCastlingMoves(std::vector<Move>& moves) const;
+
+    bool squareAttacked(int sq, Color by) const;
+};
+
+// --- Zobrist keys ----------------------------------------------------------
+namespace zobrist {
+void init();
+extern uint64_t psq[PIECE_NB][BOARD_SIZE];
+extern uint64_t sideToMove;
+extern uint64_t castling[CASTLING_NB];
+extern uint64_t enPassant[BOARD_SIZE];
+}  // namespace zobrist
+
+}  // namespace seger
