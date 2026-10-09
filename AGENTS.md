@@ -34,6 +34,13 @@ nodes** (~1.31 Mnps) with the tapered evaluation. The node count moves whenever
 the evaluation changes, so treat it as a regression tripwire rather than a
 constant to preserve.
 
+Measured strength of the tapered evaluation against the earlier one, at depth 6
+with `tools/selfplay.py` (200 games, mixed openings, colours alternated):
+**A 162 wins, 17 draws, 21 losses — score 0.853, +305 Elo (+/- 68 at 95%)**. The
+interval is wide because the gap is large; the lower bound is still above +200.
+Re-run the same command against a `build/seger` from commit `ee816e7` to
+reproduce it.
+
 ## Verifying move generation
 
 `make test` must pass in full. `perft_test` checks six standard positions
