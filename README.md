@@ -36,7 +36,7 @@ The engine binary is written to `build/seger`.
 make test
 ```
 
-This builds and runs three test binaries:
+This builds and runs five test binaries:
 
 - `position_test` checks FEN handling, make/unmake consistency, and edge cases
   such as en passant, promotion, and checkmate.
@@ -45,6 +45,21 @@ This builds and runs three test binaries:
 - `search_test` verifies forced mates against an independent brute-force
   solver, and checks that the transposition table changes neither the best move
   nor (for the worse) the node count.
+- `uci_test` drives the UCI loop in-process and checks the handshake, `go`
+  limits, `perft`, and mate reporting.
+- `eval_test` checks evaluation symmetry by mirroring positions and re-loads
+  the piece values and endgame terms.
+
+For a build/test/bench pass that carries its own wall-clock timeouts — use it in
+CI jobs, automation runs, or any session that has a time limit — run:
+
+```sh
+python3 tools/preflight.py            # build + test + bench
+python3 tools/preflight.py --selfplay # also a capped A/B match
+```
+
+Each step is killed if it overruns, and the script exits nonzero on failure or
+timeout, so a slow build or a runaway search cannot hold a run past its budget.
 
 ## Running
 
@@ -116,6 +131,42 @@ POST /api/engine  {"fen"?, "moves"?, "time"}  -> {move, fen, turn, legal[], stat
 `status` is `{over, result, reason}`. `legal` is always the mover's full legal
 move list, including in the `/api/engine` reply.
 
+## Playing on Lichess as a bot
+
+Seger can run as a [Lichess bot](https://lichess.org/player/bots): it listens
+for incoming challenges, accepts the ones that match the configured limits, and
+plays every game with the engine. Lichess hosts the games, the clocks, and the
+rating; you only need a small always-on process.
+
+One-time setup:
+
+1. Create a Lichess account for the bot. It must not have played a game yet, or
+   the upgrade below will be refused — create a fresh one if unsure.
+2. Create a personal API token with the `bot:play` scope (Account → API tokens).
+3. Upgrade the account to a bot account. This is irreversible and moves the
+   account off the web UI for good:
+   ```sh
+   curl -X POST https://lichess.org/api/bot/account/upgrade \
+     -H "Authorization: Bearer $LICHESS_TOKEN"
+   ```
+4. Run the bot:
+   ```sh
+   make
+   LICHESS_TOKEN=xxxxxxxx python3 tools/lichess_bot.py --accept-rated
+   ```
+
+The bot accepts standard chess by default, casual games only, with a clock of at
+least three minutes. Useful flags: `--accept-rated` to also play rated games,
+`--variants standard,chess3000` to widen the accepted variants, `--max-rating N`
+to turn down stronger challengers, and `--min-time S` to guard against
+ultra-fast games. It needs only outbound HTTPS to `lichess.org`; no ports have
+to be opened. Run it under `systemd` (or `screen`/`tmux`) on a machine that
+stays up, or in a small container; the process reconnects to the event stream on
+its own after a drop.
+
+Lichess also slots the bot into the bot arena and the global bot list once it is
+online, so anyone can challenge it from its profile page.
+
 ## Project layout
 
 ```
@@ -132,9 +183,15 @@ tests/
   position_test.cpp  Unit tests for the board
   perft_test.cpp     Perft reference suite
   search_test.cpp    Search and transposition-table tests
+  uci_test.cpp       UCI protocol loop tests
+  eval_test.cpp      Evaluation symmetry and term tests
 tools/
   play.py            Terminal play helper (python-chess)
   server.py          Local web-server play helper
+  selfplay.py        A/B match harness for measuring a change
+  vs_stockfish.py    Absolute-strength estimate against Stockfish
+  preflight.py       Bounded build/test/bench (and optional capped match)
+  lichess_bot.py     Lichess bot bridge driving the engine over UCI
   web/index.html     Self-contained browser board UI
   web/pieces/*.svg   Cburnett chess set (CC BY-SA 3.0)
 ```

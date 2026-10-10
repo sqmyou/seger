@@ -34,6 +34,17 @@ selects a time control instead of a fixed depth.
 CI (`.github/workflows/ci.yml`) runs `make`, `make test`, a UCI smoke test and
 `make bench` on every push to `main` and on pull requests. Keep it green.
 
+`python3 tools/preflight.py` wraps the same steps with a hard wall-clock timeout
+per step (`make`, `make test`, `make bench`, and optionally a capped self-play
+match via `--selfplay`), kills the whole process group on overrun, and exits
+nonzero on any failure, timeout or exhausted budget. Run it — not the raw
+commands — inside anything that has its own time limit (automations, CI jobs,
+long tuning sessions). A single unbounded `make bench` or a self-play match with
+no `--movetime`/cap can otherwise hold a run past its budget and get it killed;
+this is what happened to the daily-improvement automation on 2026-10-10. If you
+do run a match by hand, still bound it: `timeout 300 python3 tools/selfplay.py
+...` or `--movetime`.
+
 Bench/signature baseline: depth 9 from startpos settles at **140,502,299
 nodes** (~1.31 Mnps) with the tapered evaluation. The node count moves whenever
 the evaluation changes, so treat it as a regression tripwire rather than a

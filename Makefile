@@ -27,7 +27,7 @@ TEST_COMMON_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(TEST_COMMON_S
 
 TEST_BINS := $(BUILD_DIR)/perft_test $(BUILD_DIR)/position_test $(BUILD_DIR)/search_test $(BUILD_DIR)/uci_test $(BUILD_DIR)/eval_test
 
-.PHONY: all test divide bench clean
+.PHONY: all test divide bench preflight clean
 
 all: $(ENGINE)
 
@@ -80,6 +80,11 @@ divide: $(BUILD_DIR)/perft_divide
 # positions at a fixed depth. Use it to compare changes.
 bench: $(ENGINE)
 	@$(ENGINE) bench 9
+
+# Bounded build/test/bench preflight with per-step wall-clock timeouts, so no
+# single command can run an automation or a CI step past its budget.
+preflight: $(ENGINE)
+	@python3 tools/preflight.py
 
 clean:
 	rm -rf $(BUILD_DIR)
