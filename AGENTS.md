@@ -117,6 +117,13 @@ cross-check with python-chess (`chess.Board`), which is installed.
 - Move generation is pseudo-legal plus a make/undo legality filter
   (`isLegalMove`). Do not "optimise" the filter away without perft
   revalidation.
+- `captureScore` returns 0 for quiet moves, and callers (notably
+  `scoreMoves`) depend on that. It is called twice per element by the
+  move-ordering comparator, so `scoreMoves` now caches the value in a local
+  instead of calling it twice; the function itself short-circuits the quiet
+  case first. This is strictly behaviour-preserving (same rank values, same
+  stable-sort order): the depth-9 bench still reports 140,502,299 nodes and
+  the depth-8 bench 10,523,028, matching the pre-change baseline.
 
 ## Conventions
 

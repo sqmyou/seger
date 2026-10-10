@@ -10,15 +10,29 @@ namespace seger {
 namespace {
 
 // MVV-LVA: most valuable victim first, least valuable attacker as tie-break.
+// Returns 0 for a quiet move; callers rely on that. The common quiet case is
+// handled first so the function is cheap: it is called twice per move by the
+// move-ordering comparator below.
 int captureScore(const Position& pos, const Move& m) {
-    Piece victim = pos.pieceOn(m.to);
-    int score = 0;
     if (m.hasFlag(MF_ENPASSANT)) {
-        score = 100 * 16 - pieceValue(PAWN);
-    } else if (victim != NO_PIECE) {
-        score = pieceValue(typeOf(victim)) * 16 - pieceValue(typeOf(pos.pieceOn(m.from)));
+        int score = 100 * 16 - pieceValue(PAWN);
+        if (m.promotion != NO_PIECE_TYPE) score += pieceValue(m.promotion);
+        return score;
     }
-    if (m.promotion != NO_PIECE_TYPE) score += pieceValue(m.promotion);
+    if (m.promotion == NO_PIECE_TYPE) {
+        Piece victim = pos.pieceOn(m.to);
+        if (victim == NO_PIECE) return 0;
+        return pieceValue(typeOf(victim)) * 16 -
+               pieceValue(typeOf(pos.pieceOn(m.from)));
+    }
+    // Promotion: the destination may still hold a captured piece before the
+    // pawn is replaced, so score the victim from the board, not from pieceOn(to).
+    int score = pieceValue(m.promotion);
+    Piece victim = pos.pieceOn(m.to);
+    if (victim != NO_PIECE) {
+        score += pieceValue(typeOf(victim)) * 16 -
+                 pieceValue(typeOf(pos.pieceOn(m.from)));
+    }
     return score;
 }
 
@@ -62,7 +76,8 @@ void Search::scoreMoves(std::vector<Move>& moves, const Move& ttMove, int ply) {
     std::stable_sort(moves.begin(), moves.end(), [&](const Move& a, const Move& b) {
         auto rank = [&](const Move& m) -> int {
             if (m == ttMove) return 1'000'000;
-            if (captureScore(pos_, m) != 0) return 500'000 + captureScore(pos_, m);
+            const int cs = captureScore(pos_, m);
+            if (cs != 0) return 500'000 + cs;
             if (m == killers_[ply][0]) return 400'000;
             if (m == killers_[ply][1]) return k1;
             return history_[pos_.pieceOn(m.from)][m.to];
