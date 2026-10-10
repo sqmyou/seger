@@ -61,6 +61,11 @@ public:
     // search path (a "twofold" repetition, scored as a draw).
     bool isRepetition() const;
 
+    // True when neither side can possibly deliver checkmate from here, so the
+    // game is a dead draw under FIDE's "insufficient material" rule: king vs
+    // king, a single minor piece, or only bishops confined to one square colour.
+    bool hasInsufficientMaterial() const;
+
     // --- Move making -------------------------------------------------------
     // Applies a move to the position; pushes undo information. The caller is
     // responsible for only passing moves that were generated for this

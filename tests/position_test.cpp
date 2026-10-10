@@ -93,6 +93,32 @@ int main() {
         check(moves.empty() && pos.isInCheck(WHITE), "fool's mate: no legal moves, in check");
     }
 
+    // Insufficient-material detection.
+    {
+        struct Case { const char* fen; bool dead; const char* what; };
+        const Case cases[] = {
+            {"8/8/8/8/8/8/8/K6k w - - 0 1", true, "K vs K is a dead draw"},
+            {"8/8/8/8/8/8/8/KN5k w - - 0 1", true, "K+N vs K is a dead draw"},
+            {"8/8/8/8/8/8/8/KB5k w - - 0 1", true, "K+B vs K is a dead draw"},
+            {"8/8/8/8/8/8/8/Kb5k w - - 0 1", true, "K vs K+B is a dead draw"},
+            // Both bishops on dark squares, one per side: no mate is possible.
+            {"8/8/8/8/8/8/8/KB1b3k w - - 0 1", true, "opposite-side bishops on one colour: draw"},
+            {"8/8/8/8/8/8/8/KB3b1k w - - 0 1", true, "same-side bishops on one colour: draw"},
+            // Same-colour bishops split across sides that cannot cooperate is
+            // still a draw; but two bishops on *different* colours can mate.
+            {"8/8/8/8/8/8/8/KB2b2k w - - 0 1", false, "bishops on both colours: not dead"},
+            {"8/8/8/8/8/8/8/KB5k b - - 0 1", true, "same test holds with Black to move"},
+            {"8/8/8/8/8/8/8/KN4nk w - - 0 1", false, "two knights with a knight each: not dead"},
+            {"8/8/8/8/8/8/8/KP5k w - - 0 1", false, "a pawn can promote and mate"},
+            {"8/8/8/8/8/8/8/KR5k w - - 0 1", false, "a rook mates"},
+        };
+        for (const Case& c : cases) {
+            Position pos;
+            pos.setFen(c.fen);
+            check(pos.hasInsufficientMaterial() == c.dead, c.what);
+        }
+    }
+
     if (failures == 0) std::cout << "\nAll position tests passed.\n";
     else std::cout << "\n" << failures << " test(s) failed.\n";
     return failures == 0 ? 0 : 1;

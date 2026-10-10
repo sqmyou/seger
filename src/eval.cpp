@@ -1,5 +1,7 @@
 #include "eval.h"
 
+#include <algorithm>
+
 #include "types.h"
 
 namespace seger {
@@ -149,6 +151,13 @@ inline int relativeRank(Color c, int sq) {
     return c == WHITE ? rankOf(sq) : 7 - rankOf(sq);
 }
 
+// Chebyshev (king-move) distance between two 0x88 squares.
+inline int chebyshev(int a, int b) {
+    const int df = fileOf(a) - fileOf(b);
+    const int dr = rankOf(a) - rankOf(b);
+    return std::max(df < 0 ? -df : df, dr < 0 ? -dr : dr);
+}
+
 inline int taper(int mg, int eg, int phase) {
     return (mg * phase + eg * (TOTAL_PHASE - phase)) / TOTAL_PHASE;
 }
@@ -196,6 +205,7 @@ int evaluate(const Position& pos) {
     int mg = 0, eg = 0;
     int phase = 0;
     int mob[COLOR_NB] = {0, 0};
+    uint64_t passed[COLOR_NB] = {0, 0};  // our passed pawns, per colour
 
     // --- Material + piece-square -------------------------------------------
     for (int rank = 0; rank < 8; ++rank) {
@@ -234,6 +244,7 @@ int evaluate(const Position& pos) {
                     int r = relativeRank(c, sq);
                     mg += sign * PASSED_MG[r];
                     eg += sign * PASSED_EG[r];
+                    passed[c] |= bitOf(sq);
                 }
             } else if (pt == KNIGHT || pt == BISHOP || pt == ROOK || pt == QUEEN) {
                 // Mobility is gathered here to avoid a second full board scan.
@@ -299,6 +310,27 @@ int evaluate(const Position& pos) {
     // mob[] was accumulated during the board scan above, per colour.
     mg += (mob[us] - mob[them]) * 3;
     eg += (mob[us] - mob[them]) * 2;
+
+    // --- Passed pawns and king proximity (endgame) --------------------------
+    // The passer's own king wants to escort it; the enemy king wants to catch
+    // it. Only meaningful once the board is mostly empty, and scaled so the
+    // term stays small relative to the passed-pawn value itself.
+    if (phase <= 12) {
+        for (Color c : {us, them}) {
+            if (!passed[c]) continue;
+            const int sign = (c == us) ? 1 : -1;
+            const int ownK = pos.kingSquare(c);
+            const int oppK = pos.kingSquare(~c);
+            for (uint64_t bb = passed[c]; bb; bb &= bb - 1) {
+                const int sq = squareOfBitIndex(__builtin_ctzll(bb));
+                const int r = relativeRank(c, sq);
+                const int pushSq = (c == WHITE) ? sq + 16 : sq - 16;
+                const int escort = 4 * r * (7 - chebyshev(ownK, pushSq));  // own king close is good
+                const int block = 2 * r * (7 - chebyshev(oppK, pushSq));   // enemy king close is bad
+                eg += sign * (escort - block) / 8;
+            }
+        }
+    }
 
     // Tempo: a small edge for the side that has the move.
     mg += 10;

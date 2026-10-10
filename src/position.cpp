@@ -597,6 +597,23 @@ bool Position::isRepetition() const {
     return false;
 }
 
+bool Position::hasInsufficientMaterial() const {
+    if (byType_[PAWN] || byType_[ROOK] || byType_[QUEEN]) return false;
+
+    const int knights = __builtin_popcountll(byType_[KNIGHT]);
+    const int bishops = __builtin_popcountll(byType_[BISHOP]);
+    const int minors = knights + bishops;
+
+    if (minors <= 1) return true;   // K vs K, K+N vs K, K+B vs K
+    if (knights > 0) return false;  // any knight can assist a mate
+
+    // Bishops only. If every bishop stands on one square colour (and there are
+    // no pawns), no mate can be forced; a bishop on the other colour is needed.
+    const uint64_t darkSquares = 0xAA55AA55AA55AA55ULL;
+    const uint64_t bishopsBB = byType_[BISHOP];
+    return (bishopsBB & darkSquares) == 0 || (bishopsBB & ~darkSquares) == 0;
+}
+
 bool Position::isLegalMove(const Move& m) {
     const Color us = side_;
     doMove(m);

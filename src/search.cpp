@@ -90,6 +90,9 @@ int Search::quiescence(int alpha, int beta, int ply) {
     ++nodes_;
     if ((nodes_ & 2047) == 0 && timeUp()) return alpha;
 
+    // A capture can leave bare kings or a lone minor; then the line is dead.
+    if (pos_.hasInsufficientMaterial()) return DRAW;
+
     const bool inCheck = pos_.isInCheck(pos_.sideToMove());
     int standPat = -INF;
     if (!inCheck) {
@@ -130,10 +133,11 @@ int Search::quiescence(int alpha, int beta, int ply) {
 }
 
 int Search::search(int depth, int alpha, int beta, int ply, bool canNull) {
-    // Draw by repetition or the fifty-move rule.
+    // Draw by repetition, the fifty-move rule, or insufficient material.
     if (ply > 0) {
         if (pos_.fiftyMove() >= 100) return DRAW;
         if (pos_.isRepetition()) return DRAW;
+        if (pos_.hasInsufficientMaterial()) return DRAW;
     }
 
     const bool inCheck = pos_.isInCheck(pos_.sideToMove());
@@ -192,21 +196,21 @@ int Search::search(int depth, int alpha, int beta, int ply, bool canNull) {
         if (!pos_.isLegalMove(m)) continue;
         anyLegal = true;
 
-        pos_.doMove(m);
-        int score;
+        // Classify the move *before* it is applied: after doMove the destination
+        // holds the mover, so testing then would call every move a capture and
+        // silently disable the killer/history updates below.
         const bool isCapture = pos_.pieceOn(m.to) != NO_PIECE || m.hasFlag(MF_ENPASSANT) ||
                                m.promotion != NO_PIECE_TYPE;
 
+        pos_.doMove(m);
+        int score;
         if (moveCount == 0) {
             score = -search(depth - 1, -beta, -alpha, ply + 1, true);
         } else {
-            // Late move reduction for quiet, late moves at deeper nodes.
-            int reduction = 0;
-            if (depth >= 3 && moveCount >= 3 && !isCapture && !inCheck) {
-                reduction = 1 + (moveCount >= 6 ? 1 : 0);
-            }
-            score = -search(depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, true);
-            if (score > alpha && (reduction > 0 || score < beta))
+            // Principal-variation search: scout with a null window, re-search at
+            // full width only when the move raises alpha.
+            score = -search(depth - 1, -alpha - 1, -alpha, ply + 1, true);
+            if (score > alpha && score < beta)
                 score = -search(depth - 1, -beta, -alpha, ply + 1, true);
         }
         pos_.undoMove(m);

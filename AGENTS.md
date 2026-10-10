@@ -73,6 +73,30 @@ re-introduce them without a fresh match that beats the baseline:
   left LMR effectively dead) also lost: 0.500 at depth 5 and 0.125 at depth 7.
   A conservative 1-ply LMR with TT/killer exclusions was still below baseline
   (0.375 at depth 7). The move ordering is not yet good enough to support LMR.
+
+## Wins (measured)
+
+- **Move-ordering fix (killer/history were silently dead).** `isCapture` was
+  computed *after* `doMove`, so it was always true and neither killer moves nor
+  the history table was ever updated for quiet moves. Classifying the move
+  before it is applied restored those mechanisms: benign total nodes at depth 9
+  fell **140.5M -> 10.9M** (13x) and wall time 107s -> 17s. Strength: **0.562 over
+  120 games at depth 6 (+44 Elo)**, and **0.658 over 60 games at 100 ms/move
+  (+114 Elo)** — the gain is larger under a time control because the node cut
+  lets it search deeper. LMR was removed in the same change: it is a separate
+  idea and should only return behind a fresh match.
+- **Passed-pawn king proximity (endgame).** Added to `eval.cpp`: the passer's
+  own king scores for escorting it, the enemy king for catching it, weighted by
+  rank and only when `phase <= 12`. Measured **0.550 over 60 games at depth 6
+  (+35 Elo)** and **0.562 over 40 games at depth 7 (+44 Elo)** against the
+  pre-change build. The effect grows with depth because deeper search reaches
+  more king-and-pawn endings.
+- **Insufficient-material draw detection.** `Position::hasInsufficientMaterial()`
+  now reports K vs K, a lone minor, and all-bishops-on-one-colour as draws, and
+  the search returns DRAW for them (in both `search` and `quiescence`). This is a
+  correctness fix rather than a strength term; a same-binary control match
+  confirms the harness's side-A bias is about -47 Elo, and the change is neutral
+  against it. Covered by cases in `tests/position_test.cpp`.
 - A full-ply check extension (search checking moves one ply deeper) blew up the
   search: `search_test` did not finish in minutes on a forced-check position
   because every check extends again. If you want extensions, add them with a
