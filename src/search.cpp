@@ -193,6 +193,19 @@ int Search::search(int depth, int alpha, int beta, int ply, bool canNull) {
         }
     }
 
+    // --- Internal iterative deepening ---------------------------------------
+    // Past the cheap cutoffs, if there is still no table move to order by, run
+    // a shallower search to find one and leave it in the table, so the real
+    // search does not start from board order.
+    if (ttMove.isNone() && depth >= 6) {
+        search(depth - 2, alpha, beta, ply, canNull);
+        if (stopped_) return alpha;
+        if (ttEnabled_) {
+            if (const TTEntry* e = tt_.probe(pos_.key()))
+                if (e->hasMove) ttMove = e->move;
+        }
+    }
+
     std::vector<Move> moves;
     moves.reserve(64);
     pos_.generateMoves(moves, false);

@@ -83,6 +83,13 @@ re-introduce them without a fresh match that beats the baseline:
 
 ## Wins (measured)
 
+- **Internal iterative deepening.** When a node at `depth >= 6` reaches the move
+  loop with no transposition-table move to order by, a `depth-2` search runs
+  first and its move is picked up from the table, so the real search no longer
+  starts from board order. Depth-9 bench nodes barely move (~1%), but the root
+  ordering matters more than node count at a short time control: **0.600 over 200
+  games at 100 ms/move (+70 Elo)**, lower bound about +21.
+
 - **Reverse-futility and futility pruning (tight margins).** Reverse futility:
   `staticEval - 120*depth >= beta` for `depth <= 5`. Futility: skip a quiet move
   when `staticEval + 120*depth + 80 <= alpha` for `depth <= 3` (never the first
