@@ -1,0 +1,2 @@
+date	selfplay_score	elo_delta	abs_elo	abs_margin	notes
+2026-10-10	0.433	-46.6	2285	80	selfplay vs baseline e58ee82 (same binary, within noise); SF anchors 2200->2244, 2300->2326
