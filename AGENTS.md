@@ -70,8 +70,11 @@ re-introduce them without a fresh match that beats the baseline:
   already well tuned.
 - Reverse-futility pruning, futility pruning and late-move pruning, added on top
   of the current search, cost roughly 300 Elo: the margins were too loose and the
-  engine started cutting good lines. If you add pruning, tune the margins with a
-  match, do not paste in textbook constants.
+  engine started cutting good lines. The lesson stands for loose margins, but
+  tight margins *do* pay now — see the Wins section (a first attempt with these
+  constants also broke the mate-in-2 search test until mate-score guards were
+  added). If you add pruning, tune the margins with a match, do not paste in
+  textbook constants.
 - Enabling late-move reductions more aggressively (the old `isCapture` bug had
   left LMR effectively dead) also lost: 0.500 at depth 5 and 0.125 at depth 7.
   A conservative 1-ply LMR with TT/killer exclusions was still below baseline
@@ -79,6 +82,14 @@ re-introduce them without a fresh match that beats the baseline:
   see the Wins section — after the fix, LMR is a large gain.
 
 ## Wins (measured)
+
+- **Reverse-futility and futility pruning (tight margins).** Reverse futility:
+  `staticEval - 120*depth >= beta` for `depth <= 5`. Futility: skip a quiet move
+  when `staticEval + 120*depth + 80 <= alpha` for `depth <= 3` (never the first
+  move or in check). Both are disabled whenever the window is in mate range — the
+  first attempt broke the mate-in-2 search test until those guards went in.
+  Depth-9 bench nodes fall **2.4M -> 1.0M** (2.3s -> 1.0s). Strength: **0.595
+  over 200 games at 100 ms/move (+67 Elo)**, lower bound about +18.
 
 - **Late move reductions (now that ordering works).** With the TT move excluded,
   quiet non-check moves from index 4 are reduced 1 ply (2 plies from index 8) and

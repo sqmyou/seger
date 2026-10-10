@@ -167,12 +167,23 @@ int Search::search(int depth, int alpha, int beta, int ply, bool canNull) {
         }
     }
 
+    const int staticEval = inCheck ? -INF : evaluate(pos_);
+
+    // --- Reverse-futility pruning (static null move) -------------------------
+    // If we are ahead of beta by more than the material that could plausibly be
+    // lost in `depth` plies, assume the cutoff. The margin is deliberately tight
+    // so only genuinely hopeless nodes are pruned.
+    if (!inCheck && depth <= 5 && !isMateScore(alpha) && !isMateScore(beta) &&
+        pos_.hasNonPawnMaterial(pos_.sideToMove())) {
+        if (staticEval - 120 * depth >= beta) return staticEval;
+    }
+
     // --- Null-move pruning ---------------------------------------------------
     // Skip when in check, in a pawn-only ending (zugzwang), or when disallowed
     // by a preceding null move.
     if (canNull && !inCheck && depth >= 3 && pos_.hasNonPawnMaterial(pos_.sideToMove())) {
-        int staticEval = evaluate(pos_);
-        if (staticEval >= beta) {
+        int eval = staticEval;
+        if (eval >= beta) {
             int R = 2 + depth / 4;
             pos_.makeNullMove();
             int score = -search(depth - 1 - R, -beta, -beta + 1, ply + 1, false);
@@ -201,6 +212,14 @@ int Search::search(int depth, int alpha, int beta, int ply, bool canNull) {
         // silently disable the killer/history updates below.
         const bool isCapture = pos_.pieceOn(m.to) != NO_PIECE || m.hasFlag(MF_ENPASSANT) ||
                                m.promotion != NO_PIECE_TYPE;
+
+        // Futility: at a shallow node a quiet move that cannot lift alpha even
+        // with a free tempo is skipped. Never skip the first move, a check, or
+        // any move while a mate is on the table.
+        if (!inCheck && !isCapture && depth <= 3 && moveCount > 0 &&
+            staticEval != -INF && !isMateScore(alpha) &&
+            staticEval + 120 * depth + 80 <= alpha)
+            continue;
 
         pos_.doMove(m);
         int score;
