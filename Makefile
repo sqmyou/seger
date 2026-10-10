@@ -34,7 +34,7 @@ TEST_COMMON_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(TEST_COMMON_S
 
 TEST_BINS := $(BUILD_DIR)/perft_test $(BUILD_DIR)/position_test $(BUILD_DIR)/search_test $(BUILD_DIR)/uci_test $(BUILD_DIR)/eval_test
 
-.PHONY: all test divide bench preflight clean
+.PHONY: all test divide bench preflight verify serve clean
 
 all: $(ENGINE)
 
@@ -98,6 +98,12 @@ preflight: $(ENGINE)
 # (not the raw make/selfplay commands) in scheduled runs.
 verify:
 	@python3 tools/preflight.py --selfplay --games 60 --depth 5 --parallel 4
+
+# Play in a browser. Needs python-chess (`pip install python-chess`); the
+# engine is served from build/seger on the given PORT (default 12000), which is
+# the port the workspace work URL proxies. Open that URL to play.
+serve: $(ENGINE)
+	@python3 tools/server.py --port $(or $(PORT),12000) --host 0.0.0.0
 
 clean:
 	rm -rf $(BUILD_DIR)

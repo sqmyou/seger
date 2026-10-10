@@ -107,13 +107,15 @@ UI that talks to the engine over HTTP:
 
 ```sh
 make
-python3 tools/server.py                   # http://0.0.0.0:12000
-python3 tools/server.py --port 12001
+make serve                                # http://0.0.0.0:12000
+make serve PORT=12001                     # or pick another port
+python3 tools/server.py --port 12001      # equivalent, without make
 ```
 
 Then open the port's address (in a hosted workspace this is the provided work
-URL for that port). The UI needs no internet access and no external assets; it
-is a single HTML file in `tools/web/`. The engine runs as a child process of the
+URL for that port, e.g. `https://work-1-<workspace>.prod-runtime.all-hands.dev/`
+for port 12000). The UI needs no internet access and no external assets; it is a
+single HTML file in `tools/web/`. The engine runs as a child process of the
 server, and only one move is searched at a time.
 
 The board uses the Cburnett SVG chess set, vendored from
