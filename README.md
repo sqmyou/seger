@@ -167,6 +167,38 @@ its own after a drop.
 Lichess also slots the bot into the bot arena and the global bot list once it is
 online, so anyone can challenge it from its profile page.
 
+### Free hosting
+
+A Lichess bot must keep an outbound connection open to receive challenges, so a
+free tier that "sleeps" a web service when it is idle (Render, Koyeb, Railway)
+is not suitable — the bot would go offline and stop accepting games. What is
+needed is an always-on machine, and as of late 2026 only two providers give one
+for free with no expiry:
+
+| Provider | Specs | Catch |
+|---|---|---|
+| **Oracle Cloud Always Free** | 2 Arm Ampere cores, 12 GB RAM, 200 GB disk, 10 TB/mo egress | Needs a card for identity (a $1 hold); ARM capacity is often full, so retry or upgrade to Pay-As-You-Go (still $0 within limits) |
+| **Google Cloud free tier** | 1 `e2-micro` (2 shared vCPU burst, 1 GB RAM), 30 GB disk | Needs a card; must live in `us-west1`, `us-central1` or `us-east1`; 1 GB egress/mo |
+
+Oracle is the better fit: the ARM box is far more than a bot needs and it can
+run several engines at once. Everything else marketed as free is a time-limited
+trial (AWS, Azure, Fly.io) or a card-gated paid plan.
+
+Files are included for both routes:
+
+```sh
+# Plain Linux box (Oracle VM, Raspberry Pi, home server)
+sudo cp tools/seger-bot.service /etc/systemd/system/
+sudo systemctl enable --now seger-bot      # token in /etc/seger-bot.env
+
+# Container host
+docker build -t seger-bot .
+docker run -d --restart unless-stopped -e LICHESS_TOKEN=xxxx seger-bot --accept-rated
+```
+
+A home machine works too, but Lichess drops the event stream on its own
+maintenance restarts; the bot reconnects itself, so a short outage is fine.
+
 ## Project layout
 
 ```
@@ -192,6 +224,7 @@ tools/
   vs_stockfish.py    Absolute-strength estimate against Stockfish
   preflight.py       Bounded build/test/bench (and optional capped match)
   lichess_bot.py     Lichess bot bridge driving the engine over UCI
+  seger-bot.service  systemd unit for running the Lichess bot
   web/index.html     Self-contained browser board UI
   web/pieces/*.svg   Cburnett chess set (CC BY-SA 3.0)
 ```

@@ -1,0 +1,34 @@
+# Runs the Lichess bot as an unprivileged service on any always-on Linux box
+# (a free Oracle Cloud ARM VM, a Raspberry Pi, a home server).
+#
+#   sudo cp seger-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now seger-bot
+#   journalctl -u seger-bot -f
+#
+# Put the bot's Lichess API token in /etc/seger-bot.env as:
+#   LICHESS_TOKEN=xxxxxxxx
+# Keep that file root-owned and mode 600.
+
+[Unit]
+Description=Seger Lichess bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seger
+WorkingDirectory=/opt/seger
+EnvironmentFile=/etc/seger-bot.env
+ExecStart=/usr/bin/python3 /opt/seger/tools/lichess_bot.py --accept-rated
+Restart=always
+RestartSec=10
+# The bot only makes outbound HTTPS connections; no inbound ports are needed.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/seger
+
+[Install]
+WantedBy=multi-user.target
