@@ -48,16 +48,16 @@ reproduce it.
 
 Absolute strength via `tools/vs_stockfish.py` (Stockfish strength-limited with
 `UCI_LimitStrength`/`UCI_Elo`, 100 ms/move, one SF thread, colours alternated).
-After the move-ordering fix below, a 40-games-per-anchor run scored 0.925 vs
-SF-Elo 2100, 0.713 vs 2200 and 0.600 vs 2300, putting Seger at roughly
-**2350-2400 Elo** (the three anchors bracket it at 2358/2370/2536). The earlier
-baseline was 0.662 / 0.400 / 0.475, i.e. about **2200-2250 Elo** — so this
-session added on the order of +150 Elo absolute. (An even earlier 40-game run on
-a loaded machine gave 2075; that was contention, not a real difference — run
-these measurements on an idle CPU.) This is Seger against Stockfish's own
-UCI_Elo calibration at a short time control, not an official rating-list number;
-treat it as a ballpark. The `vs_stockfish.py` tool needs a Stockfish binary
-(`--stockfish`), which is not vendored.
+With the move-ordering fix, king proximity and LMR all in, a 40-games-per-anchor
+run scored 0.787 vs SF-Elo 2200, 0.650 vs 2300 and 0.588 vs 2400, putting Seger
+at roughly **2400-2450 Elo** (the three anchors bracket it at 2428/2408/2461).
+The starting baseline this session was 0.662 / 0.400 / 0.475, i.e. about
+**2200-2250 Elo** — so the session added on the order of +200 Elo absolute. (An
+even earlier 40-game run on a loaded machine gave 2075; that was contention, not
+a real difference — run these measurements on an idle CPU.) This is Seger against
+Stockfish's own UCI_Elo calibration at a short time control, not an official
+rating-list number; treat it as a ballpark. The `vs_stockfish.py` tool needs a
+Stockfish binary (`--stockfish`), which is not vendored.
 
 ## Tried and rejected
 
@@ -75,9 +75,18 @@ re-introduce them without a fresh match that beats the baseline:
 - Enabling late-move reductions more aggressively (the old `isCapture` bug had
   left LMR effectively dead) also lost: 0.500 at depth 5 and 0.125 at depth 7.
   A conservative 1-ply LMR with TT/killer exclusions was still below baseline
-  (0.375 at depth 7). The move ordering is not yet good enough to support LMR.
+  (0.375 at depth 7). This was true *while the move-ordering bug was present*;
+  see the Wins section — after the fix, LMR is a large gain.
 
 ## Wins (measured)
+
+- **Late move reductions (now that ordering works).** With the TT move excluded,
+  quiet non-check moves from index 4 are reduced 1 ply (2 plies from index 8) and
+  re-searched on a fail-high. Depth-9 bench nodes fall **10.9M -> 2.4M** again
+  (17s -> 2.3s). Strength: **0.729 over 120 games at 100 ms/move (+172 Elo)**
+  against the pre-LMR build (a preliminary 60-game run gave 0.783). The earlier
+  rejections in "Tried and rejected" were all made while ordering was broken;
+  this is the first LMR that survives a real match.
 
 - **Move-ordering fix (killer/history were silently dead).** `isCapture` was
   computed *after* `doMove`, so it was always true and neither killer moves nor

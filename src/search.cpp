@@ -207,9 +207,15 @@ int Search::search(int depth, int alpha, int beta, int ply, bool canNull) {
         if (moveCount == 0) {
             score = -search(depth - 1, -beta, -alpha, ply + 1, true);
         } else {
-            // Principal-variation search: scout with a null window, re-search at
-            // full width only when the move raises alpha.
-            score = -search(depth - 1, -alpha - 1, -alpha, ply + 1, true);
+            // Late move reduction: with TT/killer/history ordering now working,
+            // quiet moves late in the list are unlikely to be best, so scout
+            // them one or two plies shallower and re-search if they surprise us.
+            int R = 0;
+            if (depth >= 3 && moveCount >= 4 && !isCapture && !inCheck && m != ttMove)
+                R = 1 + (moveCount >= 8 ? 1 : 0);
+            score = -search(depth - 1 - R, -alpha - 1, -alpha, ply + 1, true);
+            if (score > alpha && R > 0)
+                score = -search(depth - 1, -alpha - 1, -alpha, ply + 1, true);
             if (score > alpha && score < beta)
                 score = -search(depth - 1, -beta, -alpha, ply + 1, true);
         }
