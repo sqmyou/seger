@@ -120,6 +120,10 @@ re-introduce them without a fresh match that beats the baseline:
   correctness fix rather than a strength term; a same-binary control match
   confirms the harness's side-A bias is about -47 Elo, and the change is neutral
   against it. Covered by cases in `tests/position_test.cpp`.
+- A counter-move heuristic (score the quiet reply to the opponent's previous
+  move just below the killers, table indexed by the moved piece) scored **0.407
+  over 200 games at 100 ms/move, about -65 Elo**, while cutting only ~1% of
+  nodes. It is a clear loss here; do not re-add it without a fresh match.
 - A full-ply check extension (search checking moves one ply deeper) blew up the
   search: `search_test` did not finish in minutes on a forced-check position
   because every check extends again. If you want extensions, add them with a
