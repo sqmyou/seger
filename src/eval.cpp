@@ -106,9 +106,20 @@ constexpr int PASSED_EG[8] = {0, 10, 20, 35, 60, 100, 160, 0};
 
 // Precomputed file/span masks. Built once at static-initialisation time.
 struct Masks {
+    static bool onBoard(int sq) {
+        return sq >= 0 && sq < BOARD_SIZE && isOnBoard(sq);
+    }
     uint64_t fileMask[8];        // all squares on a file
     uint64_t adjacent[8];        // fileMask[f-1] | fileMask[f] | fileMask[f+1]
     uint64_t passed[COLOR_NB][BOARD_SIZE];  // enemy stop-squares for a pawn here
+
+    // Attack sets by dense bit index (a1 = 0), so mobility can be counted with
+    // one popcount instead of a per-square shift loop.
+    uint64_t knightAtt[64];
+    // Sliding rays from each square, one per direction, ending at the board
+    // edge. Direction order: 0:+1 1:+8 2:+9 3:+7 4:-1 5:-8 6:-9 7:-7 (bit-index
+    // steps). Directions 0..3 increase the bit index, 4..7 decrease it.
+    uint64_t ray[64][8];
 
     Masks() {
         for (int f = 0; f < 8; ++f) fileMask[f] = 0x0101010101010101ULL << f;
@@ -138,6 +149,23 @@ struct Masks {
                 }
             }
         }
+        // Knight attack sets and sliding rays, keyed by dense bit index.
+        static const int kOff[8] = {-18, -33, -31, -14, 14, 31, 33, 18};
+        static const int rOff[8]  = {1, 16, 17, 15, -1, -16, -17, -15};
+        for (int bi = 0; bi < 64; ++bi) {
+            int sq = squareOfBitIndex(bi);
+            uint64_t k = 0;
+            for (int i = 0; i < 8; ++i) {
+                int a = sq + kOff[i];
+                if (onBoard(a)) k |= bitOf(a);
+            }
+            knightAtt[bi] = k;
+            for (int d = 0; d < 8; ++d) {
+                uint64_t m = 0;
+                for (int to = sq + rOff[d]; onBoard(to); to += rOff[d]) m |= bitOf(to);
+                ray[bi][d] = m;
+            }
+        }
     }
 };
 const Masks M;
@@ -164,33 +192,35 @@ inline int taper(int mg, int eg, int phase) {
 
 inline int popcount(uint64_t b) { return __builtin_popcountll(b); }
 
-// Number of pseudo-legal destination squares for a sliding or knight piece.
-int mobilityFor(const Position& pos, Color c, int sq, PieceType pt) {
+// Number of pseudo-legal destination squares for a sliding or knight piece,
+// counted with one popcount per direction using the precomputed rays.
+inline int mobilityFor(const Position& pos, Color c, int sq, PieceType pt) {
     const uint64_t own = pos.colorBB(c);
     const uint64_t occ = pos.occupiedBB();
-    if (pt == KNIGHT) {
-        int mob = 0;
-        const int offs[8] = {-18, -33, -31, -14, 14, 31, 33, 18};
-        for (int off : offs) {
-            int to = sq + off;
-            if (isOnBoard(to) && !(own & bitOf(to))) ++mob;
-        }
-        return mob;
-    }
-    int dirs[8], n = 0;
-    if (pt == BISHOP) { int d[4] = {-17, -15, 15, 17}; for (int i=0;i<4;++i) dirs[n++]=d[i]; }
-    else if (pt == ROOK) { int d[4] = {-16, -1, 1, 16}; for (int i=0;i<4;++i) dirs[n++]=d[i]; }
-    else { int d[8] = {-17,-16,-15,-1,1,15,16,17}; for (int i=0;i<8;++i) dirs[n++]=d[i]; }
+    const int bi = bitIndexOf(sq);
+    if (pt == KNIGHT)
+        return popcount(M.knightAtt[bi] & ~own);
 
-    int mob = 0;
-    for (int i = 0; i < n; ++i) {
-        for (int to = sq + dirs[i]; isOnBoard(to); to += dirs[i]) {
-            if (own & bitOf(to)) break;
-            ++mob;
-            if (occ & bitOf(to)) break;
-        }
+    uint64_t attacks = 0;
+    const uint64_t* rays = M.ray[bi];
+    auto rayAttack = [&](int d) {
+        const uint64_t r = rays[d];
+        const uint64_t blockers = r & occ;
+        if (!blockers) return r;
+        const int b = (d < 4) ? __builtin_ctzll(blockers) : 63 - __builtin_clzll(blockers);
+        const uint64_t* br = M.ray[b];
+        // Keep the blocker square itself (an enemy there is a capture); drop
+        // only the squares strictly beyond it.
+        return r & ~br[d];
+    };
+    if (pt == BISHOP) {
+        attacks = rayAttack(2) | rayAttack(3) | rayAttack(6) | rayAttack(7);
+    } else if (pt == ROOK) {
+        attacks = rayAttack(0) | rayAttack(1) | rayAttack(4) | rayAttack(5);
+    } else {  // QUEEN
+        for (int d = 0; d < 8; ++d) attacks |= rayAttack(d);
     }
-    return mob;
+    return popcount(attacks & ~own);
 }
 
 }  // namespace
@@ -206,50 +236,50 @@ int evaluate(const Position& pos) {
     int phase = 0;
     int mob[COLOR_NB] = {0, 0};
     uint64_t passed[COLOR_NB] = {0, 0};  // our passed pawns, per colour
+    const uint64_t occ = pos.occupiedBB();
 
     // --- Material + piece-square -------------------------------------------
-    for (int rank = 0; rank < 8; ++rank) {
-        for (int file = 0; file < 8; ++file) {
-            int sq = makeSquare(file, rank);
-            Piece p = pos.pieceOn(sq);
-            if (p == NO_PIECE) continue;
+    // Walk only the occupied squares: in the endgame that is a handful of
+    // iterations instead of a full 64-square scan with a branch per square.
+    for (uint64_t bb = occ; bb; bb &= bb - 1) {
+        const int sq = squareOfBitIndex(__builtin_ctzll(bb));
+        const Piece p = pos.pieceOn(sq);
 
-            const Color c = colorOf(p);
-            const PieceType pt = typeOf(p);
-            const int sign = (c == us) ? 1 : -1;
-            const int idx = tableIndexFor(c, sq);
-            phase += PHASE_WEIGHT[pt];
+        const Color c = colorOf(p);
+        const PieceType pt = typeOf(p);
+        const int sign = (c == us) ? 1 : -1;
+        const int idx = tableIndexFor(c, sq);
+        phase += PHASE_WEIGHT[pt];
 
-            int psq = 0;
-            switch (pt) {
-                case PAWN:   psq = PAWN_TABLE[idx]; break;
-                case KNIGHT: psq = KNIGHT_TABLE[idx]; break;
-                case BISHOP: psq = BISHOP_TABLE[idx]; break;
-                case ROOK:   psq = ROOK_TABLE[idx]; break;
-                case QUEEN:  psq = QUEEN_TABLE[idx]; break;
-                default: break;
+        int psq = 0;
+        switch (pt) {
+            case PAWN:   psq = PAWN_TABLE[idx]; break;
+            case KNIGHT: psq = KNIGHT_TABLE[idx]; break;
+            case BISHOP: psq = BISHOP_TABLE[idx]; break;
+            case ROOK:   psq = ROOK_TABLE[idx]; break;
+            case QUEEN:  psq = QUEEN_TABLE[idx]; break;
+            default: break;
+        }
+
+        if (pt == KING) {
+            mg += sign * KING_MG_TABLE[idx];
+            eg += sign * KING_EG_TABLE[idx];
+        } else {
+            mg += sign * (MG_VALUE[pt] + psq);
+            eg += sign * (EG_VALUE[pt] + psq);
+        }
+
+        if (pt == PAWN) {
+            uint64_t enemy = (c == us) ? theirPawns : ourPawns;
+            if (!(enemy & M.passed[c][sq])) {
+                int r = relativeRank(c, sq);
+                mg += sign * PASSED_MG[r];
+                eg += sign * PASSED_EG[r];
+                passed[c] |= bitOf(sq);
             }
-
-            if (pt == KING) {
-                mg += sign * KING_MG_TABLE[idx];
-                eg += sign * KING_EG_TABLE[idx];
-            } else {
-                mg += sign * (MG_VALUE[pt] + psq);
-                eg += sign * (EG_VALUE[pt] + psq);
-            }
-
-            if (pt == PAWN) {
-                uint64_t enemy = (c == us) ? theirPawns : ourPawns;
-                if (!(enemy & M.passed[c][sq])) {
-                    int r = relativeRank(c, sq);
-                    mg += sign * PASSED_MG[r];
-                    eg += sign * PASSED_EG[r];
-                    passed[c] |= bitOf(sq);
-                }
-            } else if (pt == KNIGHT || pt == BISHOP || pt == ROOK || pt == QUEEN) {
-                // Mobility is gathered here to avoid a second full board scan.
-                mob[c] += mobilityFor(pos, c, sq, pt);
-            }
+        } else if (pt == KNIGHT || pt == BISHOP || pt == ROOK || pt == QUEEN) {
+            // Mobility is gathered here to avoid a second full board scan.
+            mob[c] += mobilityFor(pos, c, sq, pt);
         }
     }
 

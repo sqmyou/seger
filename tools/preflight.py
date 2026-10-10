@@ -114,7 +114,10 @@ def main() -> int:
         cmd = [sys.executable, os.path.join(ROOT, "tools", "selfplay.py"),
                "--a", args.engine, "--b", args.reference,
                "--games", str(args.games), "--depth", str(args.depth),
-               "--parallel", str(args.parallel)]
+               "--parallel", str(args.parallel),
+               # Let the match stop itself at 90% of the step cap so it reports a
+               # partial score instead of being killed with no result.
+               "--max-seconds", str(int(args.match_timeout * 0.9))]
         budgeted("selfplay", cmd, args.match_timeout)
 
     print("\n==== preflight summary ====")

@@ -22,6 +22,7 @@ import itertools
 import math
 import multiprocessing
 import sys
+import time
 
 import chess
 import chess.engine
@@ -98,6 +99,21 @@ def _play_one(job):
     return index, result
 
 
+def _ordered_jobs(args, openings):
+    """Yield (index, job) pairs, skipping games once the global budget is spent.
+
+    Iterating lazily means a stopped match still produces a valid partial score
+    over the games that did finish, instead of being killed mid-run.
+    """
+    for i in range(args.games):
+        if args.max_seconds > 0 and time.monotonic() - args._start >= args.max_seconds:
+            print(f"stopping after {i} games: --max-seconds "
+                  f"{args.max_seconds:.0f} reached", flush=True)
+            break
+        yield (i, (i, args.a, args.b, openings[i // 2], args.depth, args.movetime,
+                   args.hash, i % 2 == 0, args.max_plies))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -113,7 +129,12 @@ def main() -> int:
                     help="rotate the opening list by this many entries")
     ap.add_argument("--parallel", type=int, default=1,
                     help="games to run at once (default 1; use your core count)")
+    ap.add_argument("--max-seconds", type=float, default=0.0,
+                    help="stop after this many wall-clock seconds (0 = no limit). "
+                         "The partial score over finished games is still reported, "
+                         "so an automation never hangs on a long match.")
     args = ap.parse_args()
+    args._start = time.monotonic()
 
     if args.movetime > 0:
         limit = chess.engine.Limit(time=args.movetime)
@@ -127,9 +148,10 @@ def main() -> int:
     wins = losses = draws = 0
 
     if args.parallel > 1:
-        jobs = [(i, args.a, args.b, opening, args.depth, args.movetime, args.hash,
-                 i % 2 == 0, args.max_plies)
-                for i, opening in enumerate(openings)]
+        # Pair each opening with both colours: game 2k has A on white, game 2k+1
+        # has A on black for the same opening. Decoupling colour from the opening
+        # removes the side-A bias a plain i%2 / i%8 scheme produces.
+        jobs = [job for _, job in _ordered_jobs(args, openings)]
         results = {}
         with multiprocessing.Pool(processes=args.parallel) as pool:
             for index, result in pool.imap_unordered(_play_one, jobs):
@@ -143,6 +165,14 @@ def main() -> int:
                     draws += 1
                 print(f"game {len(results)}/{args.games} done "
                       f"| score {score:.1f}", flush=True)
+                # Leave the pool (terminating in-flight workers) once the budget
+                # is spent, so a scheduled match can never overrun its slot.
+                if args.max_seconds > 0 and \
+                        time.monotonic() - args._start >= args.max_seconds:
+                    print(f"stopping after {len(results)} games: --max-seconds "
+                          f"{args.max_seconds:.0f} reached", flush=True)
+                    break
+        games_played = len(results)
     else:
         engine_a = chess.engine.SimpleEngine.popen_uci([args.a])
         engine_b = chess.engine.SimpleEngine.popen_uci([args.b])
@@ -151,12 +181,15 @@ def main() -> int:
                 e.configure({"Hash": args.hash})
             except chess.engine.EngineError:
                 pass
+        games_played = 0
         try:
-            for i, opening in enumerate(openings):
+            for i, _job in _ordered_jobs(args, openings):
+                opening = openings[i // 2]
                 a_is_white = (i % 2 == 0)
                 result = play_game(engine_a, engine_b, opening, limit, a_is_white,
                                    args.max_plies)
                 score += result
+                games_played += 1
                 if result == 1.0:
                     wins += 1
                 elif result == 0.0:
@@ -171,16 +204,16 @@ def main() -> int:
             engine_a.quit()
             engine_b.quit()
 
-    frac = score / args.games if args.games else 0.0
+    frac = score / games_played if games_played else 0.0
     print()
-    print(f"games {args.games}  A wins {wins}  draws {draws}  B wins {losses}")
-    print(f"A score {score:.1f}/{args.games} = {frac:.3f}")
-    margin = error_margin(frac, args.games)
+    print(f"games {games_played}  A wins {wins}  draws {draws}  B wins {losses}")
+    print(f"A score {score:.1f}/{games_played} = {frac:.3f}")
+    margin = error_margin(frac, games_played)
     ci_elo = 0.0
     if 0.0 < frac < 1.0:
         # d(Elo)/d(score) = 400 / (ln10 * score * (1 - score)).
         ci_elo = 400.0 * margin / (math.log(10.0) * frac * (1.0 - frac))
-    print(f"A - B Elo ~ {elo_diff(frac, args.games):+.1f} "
+    print(f"A - B Elo ~ {elo_diff(frac, games_played):+.1f} "
           f"(+/- {ci_elo:.0f} at 95%, rough)")
     return 0
 

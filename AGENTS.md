@@ -28,8 +28,10 @@ When in doubt, `make clean && make`.
 (`--a build/seger --b /path/to/other --games 8 --depth 5`) and reports the
 score and a rough Elo delta. Use it to check whether an evaluation or search
 change is actually an improvement before keeping it. `--parallel N` runs N
-games at once across cores (roughly N× faster wall-clock), and `--movetime`
-selects a time control instead of a fixed depth.
+games at once across cores (roughly N× faster wall-clock), `--movetime`
+selects a time control instead of a fixed depth, and `--max-seconds S` stops
+the match after S seconds and still reports the partial score over the games
+that finished, so a scheduled run can never hang on a long match.
 
 CI (`.github/workflows/ci.yml`) runs `make`, `make test`, a UCI smoke test and
 `make bench` on every push to `main` and on pull requests. Keep it green.
@@ -37,18 +39,20 @@ CI (`.github/workflows/ci.yml`) runs `make`, `make test`, a UCI smoke test and
 `python3 tools/preflight.py` wraps the same steps with a hard wall-clock timeout
 per step (`make`, `make test`, `make bench`, and optionally a capped self-play
 match via `--selfplay`), kills the whole process group on overrun, and exits
-nonzero on any failure, timeout or exhausted budget. Run it — not the raw
-commands — inside anything that has its own time limit (automations, CI jobs,
-long tuning sessions). A single unbounded `make bench` or a self-play match with
-no `--movetime`/cap can otherwise hold a run past its budget and get it killed;
-this is what happened to the daily-improvement automation on 2026-10-10. If you
-do run a match by hand, still bound it: `timeout 300 python3 tools/selfplay.py
-...` or `--movetime`.
+nonzero on any failure, timeout or exhausted budget. `make preflight` runs the
+build/test/bench form and `make verify` adds a short capped match. Run these —
+not the raw commands — inside anything that has its own time limit
+(automations, CI jobs, long tuning sessions). A single unbounded `make bench` or
+a self-play match with no `--movetime`/cap can otherwise hold a run past its
+budget and get it killed; this is what happened to the daily-improvement
+automation on 2026-10-10. `--max-seconds` on `selfplay.py` and the per-step
+timeouts in `preflight.py` are the two guards; keep both.
 
-Bench/signature baseline: depth 9 from startpos settles at **140,502,299
-nodes** (~1.31 Mnps) with the tapered evaluation. The node count moves whenever
-the evaluation changes, so treat it as a regression tripwire rather than a
-constant to preserve.
+Bench/signature baseline: depth 9 from startpos currently settles at
+**982,914 nodes** (~1.33 Mnps) after the aspiration, eval and ordering changes.
+The node count moves whenever the evaluation or search changes, so treat it as a
+regression tripwire rather than a constant to preserve (an older build reported
+140,502,299 nodes before the move-ordering fix cut the tree ~13x).
 
 Measured strength of the tapered evaluation against the earlier one, at depth 6
 with `tools/selfplay.py` (200 games, mixed openings, colours alternated):
@@ -93,6 +97,33 @@ re-introduce them without a fresh match that beats the baseline:
   see the Wins section — after the fix, LMR is a large gain.
 
 ## Wins (measured)
+
+- **Aspiration-window re-search was firing on every iteration.** In
+  `Search::think`, the fail-low/high test compared the returned score against
+  `alpha`/`beta` *after* the root loop had already raised them to the best
+  score, so `bestScore <= alpha` was true even on a successful pass and the root
+  re-searched the whole position up to four times per depth from depth 5 on. The
+  searched window is now captured before the loop mutates it
+  (`winAlpha`/`winBeta`), so a pass that finishes inside its window is accepted.
+  Strength: **0.562 over 200 games at 80 ms/move (+43.7 Elo)** against the
+  pre-change build, and the effect compounds with the eval speedup below.
+
+- **Faster evaluation and move ordering (same play, deeper search).** Two
+  behaviour-preserving rewrites cut engine time ~35% at the same node count,
+  which turns into depth and strength under a time control. `evaluate()` now
+  walks only the occupied squares instead of all 64, using a bitboard-driven
+  mobility count built from precomputed ray tables (one `popcount` per slider
+  direction). `Search::scoreMoves` ranks each move once into a `(score, move)`
+  array and stable-sorts that, instead of calling `captureScore` for both
+  operands on every comparison (previously O(n log n) board probes per node).
+  `-O3` replaces `-O2` as the default optimisation level (~20%), with an opt-in
+  `make NATIVE=1` for `-march=native` (~10% more, non-portable). Depth-9 bench
+  nodes are unchanged at **982,914** (the startpos signature moved from the
+  140.5M of the older, buggy-ordering build); nps rises **1.06M -> 1.33M**.
+  Combined strength: **0.681 over 400 games at 100 ms/move (+132 Elo)** and
+  **0.629 over a second 400 with rotated openings (+92 Elo)**, pooling to
+  **0.650 over 1400 games, +107 Elo (+/- 38 at 95%)** against the pre-change
+  build.
 
 - **Internal iterative deepening.** When a node at `depth >= 6` reaches the move
   loop with no transposition-table move to order by, a `depth-2` search runs

@@ -73,17 +73,31 @@ bool Search::timeUp() {
 
 void Search::scoreMoves(std::vector<Move>& moves, const Move& ttMove, int ply) {
     const int k1 = pieceValue(QUEEN) * 2;
-    std::stable_sort(moves.begin(), moves.end(), [&](const Move& a, const Move& b) {
-        auto rank = [&](const Move& m) -> int {
-            if (m == ttMove) return 1'000'000;
+    // Rank every move once, then sort pairs. The comparator used to call
+    // captureScore on both operands for every comparison, i.e. O(n log n) board
+    // probes per node; precomputing pays each move a single time. Stable sorting
+    // the (score, original index) pairs reproduces the old ordering exactly.
+    const size_t n = moves.size();
+    std::vector<std::pair<int, Move>> ranked(n);
+    for (size_t i = 0; i < n; ++i) {
+        const Move& m = moves[i];
+        int r;
+        if (m == ttMove) {
+            r = 1'000'000;
+        } else {
             const int cs = captureScore(pos_, m);
-            if (cs != 0) return 500'000 + cs;
-            if (m == killers_[ply][0]) return 400'000;
-            if (m == killers_[ply][1]) return k1;
-            return history_[pos_.pieceOn(m.from)][m.to];
-        };
-        return rank(a) > rank(b);
-    });
+            if (cs != 0) r = 500'000 + cs;
+            else if (m == killers_[ply][0]) r = 400'000;
+            else if (m == killers_[ply][1]) r = k1;
+            else r = history_[pos_.pieceOn(m.from)][m.to];
+        }
+        ranked[i] = {r, m};
+    }
+    std::stable_sort(ranked.begin(), ranked.end(),
+                     [](const std::pair<int, Move>& a, const std::pair<int, Move>& b) {
+                         return a.first > b.first;
+                     });
+    for (size_t i = 0; i < n; ++i) moves[i] = ranked[i].second;
 }
 
 int Search::quiescence(int alpha, int beta, int ply) {
@@ -347,11 +361,7 @@ Move Search::think(const SearchLimits& limits) {
         const auto iterStart = std::chrono::steady_clock::now();
         // Aspiration window around the previous score (widened on a fail).
         int delta = 25;
-        int alpha = -INF, beta = INF;
-        if (depth >= 5 && !isMateScore(prevScore)) {
-            alpha = std::max(-INF, prevScore - delta);
-            beta = std::min(INF, prevScore + delta);
-        }
+        int winAlpha = -INF, winBeta = INF;  // window actually searched this pass
 
         Move iterBest = MOVE_NONE;
         int bestScore = -INF;
@@ -363,8 +373,9 @@ Move Search::think(const SearchLimits& limits) {
         scoreMoves(rootMoves, ttRootMove, 0);
 
         auto searchRoot = [&]() {
-            alpha = (depth >= 5 && !isMateScore(prevScore)) ? std::max(-INF, prevScore - delta) : -INF;
-            beta = (depth >= 5 && !isMateScore(prevScore)) ? std::min(INF, prevScore + delta) : INF;
+            winAlpha = (depth >= 5 && !isMateScore(prevScore)) ? std::max(-INF, prevScore - delta) : -INF;
+            winBeta = (depth >= 5 && !isMateScore(prevScore)) ? std::min(INF, prevScore + delta) : INF;
+            int alpha = winAlpha, beta = winBeta;
             iterBest = MOVE_NONE;
             bestScore = -INF;
             int mc = 0;
@@ -389,13 +400,15 @@ Move Search::think(const SearchLimits& limits) {
             }
         };
 
-        // Re-search with progressively wider aspiration windows on failure.
+        // Re-search with progressively wider aspiration windows on failure. The
+        // window this pass searched must be captured before searchRoot() mutates
+        // alpha/beta, otherwise the fail-low test below is true on every pass.
         for (int guard = 0; guard < 4; ++guard) {
             searchRoot();
             if (stopped_) break;
             if (iterBest.isNone()) break;
-            if (bestScore <= alpha && alpha > -INF) { delta *= 4; continue; }
-            if (bestScore >= beta && beta < INF) { delta *= 4; continue; }
+            if (bestScore <= winAlpha && winAlpha > -INF) { delta *= 4; continue; }
+            if (bestScore >= winBeta && winBeta < INF) { delta *= 4; continue; }
             break;
         }
 

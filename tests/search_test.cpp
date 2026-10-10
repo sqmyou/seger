@@ -120,8 +120,8 @@ int main() {
     {
         Position pos;
         pos.setStartpos();
-        int nodesWith = searchNodes(pos, 6, true);
-        int nodesWithout = searchNodes(pos, 6, false);
+        int nodesWith = searchNodes(pos, 8, true);
+        int nodesWithout = searchNodes(pos, 8, false);
         check(nodesWith < nodesWithout, "TT reduces node count",
               "with=" + std::to_string(nodesWith) + " without=" + std::to_string(nodesWithout));
 
