@@ -215,3 +215,9 @@ response that drops `legal` strands the player after their first move.
 The board pieces are the Cburnett set vendored in `tools/web/pieces/`
 (CC BY-SA 3.0; attribution in `PIECES-LICENSE`). Do not re-download them at
 runtime.
+
+`tools/lichess_bot.py` runs the same engine as a Lichess bot: it streams
+`/api/stream/event`, accepts or declines challenges per its flags, and plays
+each game by driving the UCI binary (no `python-chess` dependency). It must run
+on a machine that stays up, with a `bot:play` token, and needs only outbound
+HTTPS. See the README for the account-upgrade steps.
