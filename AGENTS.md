@@ -48,16 +48,16 @@ reproduce it.
 
 Absolute strength via `tools/vs_stockfish.py` (Stockfish strength-limited with
 `UCI_LimitStrength`/`UCI_Elo`, 100 ms/move, one SF thread, colours alternated).
-With the move-ordering fix, king proximity and LMR all in, a 40-games-per-anchor
-run scored 0.787 vs SF-Elo 2200, 0.650 vs 2300 and 0.588 vs 2400, putting Seger
-at roughly **2400-2450 Elo** (the three anchors bracket it at 2428/2408/2461).
-The starting baseline this session was 0.662 / 0.400 / 0.475, i.e. about
-**2200-2250 Elo** — so the session added on the order of +200 Elo absolute. (An
-even earlier 40-game run on a loaded machine gave 2075; that was contention, not
-a real difference — run these measurements on an idle CPU.) This is Seger against
-Stockfish's own UCI_Elo calibration at a short time control, not an official
-rating-list number; treat it as a ballpark. The `vs_stockfish.py` tool needs a
-Stockfish binary (`--stockfish`), which is not vendored.
+With everything below in, a 40-games-per-anchor run scored 0.525 vs SF-Elo 2400
+(draw), 0.463 vs 2500 and 0.425 vs 2600, and the anchors bracket Seger at
+2417/2474/2547, i.e. roughly **2450-2500 Elo**. The starting baseline this
+session was 0.662 / 0.400 / 0.475 vs 2100 / 2200 / 2300, about **2200-2250 Elo**
+— so the session added on the order of +250 Elo absolute, most of it from the
+move-ordering fix. (An even earlier 40-game run on a loaded machine gave 2075;
+that was contention, not a real difference — run these measurements on an idle
+CPU.) This is Seger against Stockfish's own UCI_Elo calibration at a short time
+control, not an official rating-list number; treat it as a ballpark. The
+`vs_stockfish.py` tool needs a Stockfish binary (`--stockfish`), not vendored.
 
 ## Tried and rejected
 
